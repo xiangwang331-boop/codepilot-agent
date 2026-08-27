@@ -1,0 +1,66 @@
+"""配置读取。
+
+所有可配置项都来自环境变量，让 Agent Core 与具体模型供应商解耦：
+- LLM_API_KEY  : 供应商 API Key
+- LLM_BASE_URL : OpenAI 兼容端点（DeepSeek/OpenAI/其他），留空走 OpenAI 默认
+- LLM_MODEL    : 模型名
+- WORKSPACE_ROOT : workspace 根目录，默认 codepilot/workspace_data
+- MAX_ITERATIONS: 最大迭代次数，防死循环
+- CHECKPOINT_DB_PATH : checkpoint SQLite 库路径，默认 data/checkpoints.db
+
+启动时会加载项目根目录的 `.env`（不存在则退回 `.env.example`），
+但已存在的环境变量优先，不会被覆盖。
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    """加载 .env（优先）或 .env.example，但不覆盖已有环境变量。"""
+    project_root = Path(__file__).resolve().parent.parent
+    for name in (".env", ".env.example"):
+        path = project_root / name
+        if not path.is_file():
+            continue
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+        return  # 只加载第一个存在的文件
+
+
+@dataclass(frozen=True)
+class Settings:
+    llm_api_key: str
+    llm_base_url: str
+    llm_model: str
+    workspace_root: Path
+    max_iterations: int = 20
+    checkpoint_db_path: Path = Path("data/checkpoints.db")
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        _load_dotenv()
+        project_root = Path(__file__).resolve().parent.parent
+        workspace_root = Path(
+            os.getenv("WORKSPACE_ROOT", str(project_root / "workspace_data"))
+        ).resolve()
+        checkpoint_db_path = Path(
+            os.getenv("CHECKPOINT_DB_PATH", str(project_root / "data" / "checkpoints.db"))
+        ).resolve()
+        return cls(
+            llm_api_key=os.getenv("LLM_API_KEY", ""),
+            llm_base_url=os.getenv("LLM_BASE_URL", ""),
+            llm_model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+            workspace_root=workspace_root,
+            max_iterations=int(os.getenv("MAX_ITERATIONS", "20")),
+            checkpoint_db_path=checkpoint_db_path,
+        )

@@ -1,0 +1,21 @@
+[project]
+name = "codepilot"
+version = "0.1.0"
+description = "CodePilot — LangGraph 驱动的 Multi-Agent 软件工程运行时（P0：单 Agent + ReAct + Tools + Workspace）"
+requires-python = ">=3.13"
+dependencies = [
+    "langgraph>=0.2.60",
+    "langchain-core>=0.3.30",
+    "langchain-openai>=0.2.10",
+    "pydantic>=2.7",
+    "langgraph-checkpoint-sqlite>=3.1.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
