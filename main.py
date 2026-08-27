@@ -22,14 +22,12 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8")
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from agent.graph import build_agent_graph
-from agent.prompts import CODER_SYSTEM_PROMPT
+from agent.specialists import build_supervisor_prompt
+from agent.supervisor import build_supervisor_graph
 from config.settings import Settings
 from events.events import EventType, emit, emitter, format_event
-from tools.registry import build_tools
 from workspace.manager import WorkspaceManager
 
 
@@ -80,14 +78,6 @@ def main() -> None:
     settings.checkpoint_db_path.parent.mkdir(parents=True, exist_ok=True)
 
     ws = WorkspaceManager(settings.workspace_root)
-    tools = build_tools(ws)
-
-    llm = ChatOpenAI(
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url or None,
-        temperature=0,
-    ).bind_tools(tools)
 
     # 实时打印事件
     emitter.add_listener(lambda e: print(format_event(e)))
@@ -95,7 +85,7 @@ def main() -> None:
     config = {"configurable": {"thread_id": thread_id}}
 
     with SqliteSaver.from_conn_string(str(settings.checkpoint_db_path)) as checkpointer:
-        graph = build_agent_graph(llm, tools, checkpointer=checkpointer)
+        graph = build_supervisor_graph(settings, ws, checkpointer=checkpointer)
 
         if resume_mode:
             # 恢复：先确认会话存在，再决定是否追加新指令
@@ -111,15 +101,15 @@ def main() -> None:
             else:
                 graph_input = None
         else:
-            emit(EventType.AGENT_STARTED, agent="Coder", message="")
+            emit(EventType.AGENT_STARTED, agent="Supervisor", message="")
             print(f"\n=== 任务 ===\n{task}\n")
             print(f"会话 ID: {thread_id}")
             graph_input = {
                 "messages": [
-                    SystemMessage(content=CODER_SYSTEM_PROMPT),
+                    SystemMessage(content=build_supervisor_prompt()),
                     HumanMessage(content=task),
                 ],
-                "current_agent": "Coder",
+                "current_agent": "Supervisor",
                 "current_task": task,
                 "iteration_count": 0,
                 "max_iterations": settings.max_iterations,
@@ -132,12 +122,12 @@ def main() -> None:
 
     print("\n=== 结果 ===")
     if result.get("status") == "finished":
-        emit(EventType.AGENT_COMPLETED, agent="Coder", message="")
+        emit(EventType.AGENT_COMPLETED, agent="Supervisor", message="")
         print(result.get("result") or "(无内容)")
     else:
         emit(
             EventType.AGENT_FAILED,
-            agent="Coder",
+            agent="Supervisor",
             message=result.get("error") or f"状态 {result.get('status')}",
         )
         print(f"状态: {result.get('status')} — {result.get('error') or ''}")

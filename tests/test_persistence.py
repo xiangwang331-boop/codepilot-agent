@@ -5,32 +5,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from agent.graph import build_agent_graph
+from conftest import FakeLLM, _tool_call
 from tools.registry import build_tools
 from workspace.manager import WorkspaceManager
-
-
-class FakeLLM:
-    """按预设脚本吐 AIMessage，确定性驱动 ReAct 循环（同 test_agent_loop）。"""
-
-    def __init__(self, script):
-        self.script = list(script)
-        self.calls = 0
-
-    def bind_tools(self, tools):
-        return self
-
-    def invoke(self, messages):
-        self.calls += 1
-        if not self.script:
-            return AIMessage(content="(fallback done)")
-        return self.script.pop(0)
-
-
-def _tool_call(idx, name, args):
-    return AIMessage(
-        content="",
-        tool_calls=[{"name": name, "args": args, "id": f"call_{idx}", "type": "tool_call"}],
-    )
 
 
 def _initial(task="写文件"):
