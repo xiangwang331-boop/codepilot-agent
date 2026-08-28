@@ -20,12 +20,15 @@ from agent import core
 from agent.state import AgentState
 
 
-def build_agent_graph(llm, tools: list, checkpointer=None):
+def build_agent_graph(llm, tools: list, checkpointer=None, condense_node=None):
     """组装 ReAct 图。
 
     - llm 需已 .bind_tools(tools)（或测试里的 FakeLLM）。
     - checkpointer：LangGraph BaseCheckpointSaver；为 None 时默认 MemorySaver，
       生产 CLI 传入 SqliteSaver 实现磁盘持久化。
+    - condense_node（P4-3 长会话压缩）：为 None 时图保持 tools → agent
+      （与 P0-P4-2 完全一致）；传入时变为 tools → condense → agent，
+      每轮 tools 完整返回后、agent 下次决策前检查一次 messages 预算。
     """
     tools_by_name = {t.name: t for t in tools}
 
@@ -35,6 +38,11 @@ def build_agent_graph(llm, tools: list, checkpointer=None):
 
     graph.set_entry_point("agent")
     graph.add_conditional_edges("agent", core.route, {"tools": "tools", "end": END})
-    graph.add_edge("tools", "agent")
+    if condense_node is not None:
+        graph.add_node("condense", condense_node)
+        graph.add_edge("tools", "condense")
+        graph.add_edge("condense", "agent")
+    else:
+        graph.add_edge("tools", "agent")
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())

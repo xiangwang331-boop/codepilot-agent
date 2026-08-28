@@ -59,6 +59,24 @@ def make_agent_node(llm) -> Callable[[AgentState], dict[str, Any]]:
             err = f"LLM 调用失败: {type(e).__name__}: {e}"
             return {"messages": [AIMessage(content=err)], "status": "error", "error": err}
 
+        # P4-3-2 可观测：真实 LLM 消耗（计费值）。OpenAI 兼容响应（含 DeepSeek）会把 usage
+        # 放进 response_metadata["token_usage"]；FakeLLM 没有该字段 → 不发（测试零影响）。
+        usage = (getattr(resp, "response_metadata", None) or {}).get("token_usage")
+        if usage:
+            prompt = usage.get("prompt_tokens", 0)
+            completion = usage.get("completion_tokens", 0)
+            total = usage.get("total_tokens", prompt + completion)
+            emit(
+                EventType.TOKEN_USAGE,
+                agent=agent_name,
+                message=f"LLM 调用 输入 {prompt} → 输出 {completion} = {total} tokens",
+                detail={
+                    "prompt_tokens": prompt,
+                    "completion_tokens": completion,
+                    "total_tokens": total,
+                },
+            )
+
         new_iter = iteration + 1
         tool_calls = list(getattr(resp, "tool_calls", None) or [])
 

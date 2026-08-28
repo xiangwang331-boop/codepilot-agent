@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.types import Command
 import pytest
 
+from agent.condense import make_condense_node
 from agent.specialists import SPECIALISTS, build_supervisor_prompt, specialist_listing
 from agent.supervisor import build_supervisor_graph, make_delegate_tool
 from conftest import FakeLLM, QUICKSORT_CODE, TEST_CODE, _tool_call
@@ -17,6 +18,10 @@ from config.settings import Settings
 from events.events import EventType, emitter
 from tools.registry import build_tools_subset
 from workspace.manager import WorkspaceManager
+
+# 编排类测试显式退出 condense：断言完整委派序列/历史，不让压缩把中间记录收进摘要。
+# 与 require_approval_for=() 退出 interrupt 同理（P4-2 先例）。
+_NO_CONDENSE = make_condense_node(trigger_count=10**9)
 
 
 def _settings(tmp_path) -> Settings:
@@ -271,7 +276,10 @@ def test_analyst_planner_coder_tester_relay(tmp_path):
         AIMessage(content="完成：分析、计划、实现、测试齐全。"),
     ])
 
-    graph = build_supervisor_graph(_settings(tmp_path), ws, make_llm=make, require_approval_for=())
+    graph = build_supervisor_graph(
+        _settings(tmp_path), ws, make_llm=make, require_approval_for=(),
+        condense_node=_NO_CONDENSE,  # 编排序列断言：不掺压缩
+    )
     result = graph.invoke(_initial(), {"configurable": {"thread_id": "r1"}})
 
     assert result["status"] == "finished"
@@ -395,7 +403,10 @@ def test_reviewer_blocking_delegates_debugger_then_coder(tmp_path):
         AIMessage(content="完成：Debugger 定位 → Coder 修复 → Tester 回归 → Reviewer 复审通过。"),
     ])
 
-    graph = build_supervisor_graph(_settings(tmp_path), ws, make_llm=make, require_approval_for=())
+    graph = build_supervisor_graph(
+        _settings(tmp_path), ws, make_llm=make, require_approval_for=(),
+        condense_node=_NO_CONDENSE,  # 6 步委派序列断言：不掺压缩
+    )
     result = graph.invoke(_initial(), {"configurable": {"thread_id": "d2"}})
 
     assert result["status"] == "finished"

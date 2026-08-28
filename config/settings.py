@@ -7,6 +7,8 @@
 - WORKSPACE_ROOT : workspace 根目录，默认 codepilot/workspace_data
 - MAX_ITERATIONS: 最大迭代次数，防死循环
 - CHECKPOINT_DB_PATH : checkpoint SQLite 库路径，默认 data/checkpoints.db
+- CONTEXT_LIMIT : 模型上下文窗口 token 预算（P4-3-2 token 守卫）；None 关闭
+- RESERVE_TOKENS : token 预算外 headroom（输出 + 下轮新消息 + 估算误差）；None 用 context_limit//5
 
 启动时会加载项目根目录的 `.env`（不存在则退回 `.env.example`），
 但已存在的环境变量优先，不会被覆盖。
@@ -16,6 +18,14 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _env_int(name: str, default: int | None = None) -> int | None:
+    """读环境变量为 int；未设置/空串返回 default（默认 None = 关闭该项）。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return int(raw.strip())
 
 
 def _load_dotenv() -> None:
@@ -45,6 +55,9 @@ class Settings:
     workspace_root: Path
     max_iterations: int = 20
     checkpoint_db_path: Path = Path("data/checkpoints.db")
+    # P4-3-2 token-aware context budget：None = 关闭 token 守卫（仅消息数触发，P4-3-1 行为）
+    context_limit: int | None = None
+    reserve_tokens: int | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -63,4 +76,6 @@ class Settings:
             workspace_root=workspace_root,
             max_iterations=int(os.getenv("MAX_ITERATIONS", "20")),
             checkpoint_db_path=checkpoint_db_path,
+            context_limit=_env_int("CONTEXT_LIMIT"),
+            reserve_tokens=_env_int("RESERVE_TOKENS"),
         )

@@ -19,6 +19,8 @@ class EventType(str, Enum):
     TOOL_CALL_FAILED = "ToolCallFailed"
     AGENT_COMPLETED = "AgentCompleted"
     AGENT_FAILED = "AgentFailed"
+    CONDENSE = "Condense"
+    TOKEN_USAGE = "TokenUsage"
 
 
 @dataclass
@@ -80,4 +82,16 @@ def format_event(e: Event) -> str:
         return f"{prefix} 完成"
     if e.type is EventType.AGENT_FAILED:
         return f"{prefix} 失败：{e.message}"
+    if e.type is EventType.CONDENSE:
+        out = f"    [Condense] {e.message}"
+        summary = (e.detail or {}).get("summary")
+        if summary:
+            out += "\n" + "\n".join("    | " + line for line in summary.splitlines())
+        return out
+    if e.type is EventType.TOKEN_USAGE:
+        d = e.detail or {}
+        return (
+            f"{prefix} 消耗 {d.get('total_tokens', '?')} tokens"
+            f"（输入 {d.get('prompt_tokens', '?')} → 输出 {d.get('completion_tokens', '?')}）"
+        )
     return f"{prefix} {e.message}"

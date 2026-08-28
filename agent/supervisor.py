@@ -22,6 +22,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
 
+from agent.condense import make_condense_node, recursion_limit_for
 from agent.graph import build_agent_graph
 from agent.specialists import SPECIALISTS, Specialist, specialist_listing
 from config.settings import Settings
@@ -41,12 +42,18 @@ class DelegateArgs(BaseModel):
 
 
 def build_specialist_subgraph(
-    spec: Specialist, ws: WorkspaceManager, make_llm: Callable[[str], Any]
+    spec: Specialist,
+    ws: WorkspaceManager,
+    make_llm: Callable[[str], Any],
+    condense_node: Callable | None = None,
 ) -> Any:
-    """构造一个 specialist 的 ReAct subgraph（复用内核，MemorySaver）。"""
+    """构造一个 specialist 的 ReAct subgraph（复用内核，MemorySaver）。
+
+    condense_node（P4-3）：透传给子图，长 specialist 会话同样受益；None 表示不加。
+    """
     subset = build_tools_subset(ws, spec.tool_names)
     llm = make_llm(spec.name).bind_tools(subset)
-    return build_agent_graph(llm, subset)
+    return build_agent_graph(llm, subset, condense_node=condense_node)
 
 
 def make_delegate_tool(
@@ -90,7 +97,15 @@ def make_delegate_tool(
             "tool_calls": [],
             "observations": [],
         }
-        child_config = {"configurable": {"thread_id": f"delegate-{next(counter)}"}}
+        child_config = {
+            "configurable": {"thread_id": f"delegate-{next(counter)}"},
+            # P4-3: condense 使每轮迭代多 1 个 superstep（agent→tools→condense），
+            # 放大 recursion_limit，否则长循环先撞框架 GraphRecursionError
+            # 而非 max_iterations 守卫（P4-1「子 agent 失败」语义会被破坏）。
+            "recursion_limit": recursion_limit_for(
+                spec.max_iterations or settings.max_iterations
+            ),
+        }
 
         emit(EventType.AGENT_STARTED, agent=spec.name, message="")
         try:
@@ -126,12 +141,15 @@ def build_supervisor_graph(
     make_llm: Callable[[str], Any] | None = None,
     checkpointer=None,
     require_approval_for: tuple[str, ...] = ("coder",),
+    condense_node: Callable | None = None,
 ):
     """组装 supervisor 图（复用 ReAct 内核）+ specialists subgraph。
 
     - make_llm(role) 返回该角色未 bind 的 LLM（生产：ChatOpenAI；测试：FakeLLM）。
       不传则用 settings 构造 ChatOpenAI。
     - require_approval_for: 委派前需人类批准（interrupt）的 specialist 集合，默认仅 coder。
+    - condense_node（P4-3 长会话压缩）：None 时用默认 make_condense_node()，supervisor
+      与每个 specialist 子图都挂上；测试可传自定义阈值节点（或高阈值关闭）。
     - supervisor 工具 = 只读 + delegate；挂 checkpointer（P1 SqliteSaver）。
     """
     if make_llm is None:
@@ -145,11 +163,21 @@ def build_supervisor_graph(
                 temperature=0,
             )
 
+    if condense_node is None:
+        # P4-3-2: 默认 condense 节点带 Settings 的 token 预算（context_limit/reserve_tokens；
+        # 都是 None 时 token 守卫关闭，行为与 P4-3-1 一致）。测试仍可传自定义节点覆盖。
+        condense_node = make_condense_node(
+            context_limit=settings.context_limit,
+            reserve_tokens=settings.reserve_tokens,
+        )
+
     specialist_graphs = {
-        name: build_specialist_subgraph(spec, ws, make_llm)
+        name: build_specialist_subgraph(spec, ws, make_llm, condense_node)
         for name, spec in SPECIALISTS.items()
     }
     delegate_tool = make_delegate_tool(specialist_graphs, settings, require_approval_for)
     supervisor_tools = build_tools_subset(ws, SUPERVISOR_TOOL_NAMES) + [delegate_tool]
     supervisor_llm = make_llm("Supervisor").bind_tools(supervisor_tools)
-    return build_agent_graph(supervisor_llm, supervisor_tools, checkpointer=checkpointer)
+    return build_agent_graph(
+        supervisor_llm, supervisor_tools, checkpointer=checkpointer, condense_node=condense_node
+    )

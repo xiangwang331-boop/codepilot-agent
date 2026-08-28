@@ -25,6 +25,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
+from agent.condense import recursion_limit_for
 from agent.specialists import build_supervisor_prompt
 from agent.supervisor import build_supervisor_graph
 from config.settings import Settings
@@ -83,7 +84,12 @@ def main() -> None:
     # 实时打印事件
     emitter.add_listener(lambda e: print(format_event(e)))
 
-    config = {"configurable": {"thread_id": thread_id}}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        # P4-3: supervisor 也是 agent→tools→condense 三节点循环，按 max_iterations
+        # 放大 recursion_limit，保证 max_iterations 是真正的循环上限（默认 25 只够 ~8 轮）。
+        "recursion_limit": recursion_limit_for(settings.max_iterations),
+    }
 
     with SqliteSaver.from_conn_string(str(settings.checkpoint_db_path)) as checkpointer:
         graph = build_supervisor_graph(settings, ws, checkpointer=checkpointer)
@@ -132,6 +138,16 @@ def main() -> None:
                 print(f"\n[需要批准] {payload.get('question', '(无说明)')}")
             answer = input("  输入 yes 批准 / no 拒绝：").strip().lower()
             result = graph.invoke(Command(resume=answer or "no"), config)
+
+    # P4-3-2 可观测：会话累计真实 token 消耗（汇总每次 LLM 调用的 usage）
+    usage_events = [e for e in emitter.events if e.type is EventType.TOKEN_USAGE]
+    if usage_events:
+        prompt = sum((e.detail or {}).get("prompt_tokens", 0) for e in usage_events)
+        completion = sum((e.detail or {}).get("completion_tokens", 0) for e in usage_events)
+        print(
+            f"\n=== Token 消耗 ===\nLLM 调用 {len(usage_events)} 次，"
+            f"累计 输入 {prompt} / 输出 {completion} = {prompt + completion} tokens"
+        )
 
     print("\n=== 结果 ===")
     if result.get("status") == "finished":

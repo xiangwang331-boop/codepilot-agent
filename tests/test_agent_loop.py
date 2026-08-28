@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agent.graph import build_agent_graph
 from conftest import FakeLLM, QUICKSORT_CODE, TEST_CODE, _tool_call
-from events.events import EventType, emitter
+from events.events import EventType, emitter, format_event
 from tools.registry import build_tools
 from workspace.manager import WorkspaceManager
 
@@ -81,3 +81,62 @@ def test_unknown_tool_returns_error_and_continues(tmp_path):
     assert result["status"] == "finished"
     failed = [e for e in emitter.events if e.type is EventType.TOOL_CALL_FAILED]
     assert len(failed) == 1
+
+
+def test_real_token_usage_emits_per_call(tmp_path):
+    """P4-3-2 可观测：真实 LLM 响应带 token_usage 时，每次调用发 TOKEN_USAGE 事件，CLI 可见。"""
+    emitter.clear()
+    ws = WorkspaceManager(tmp_path / "ws")
+    tools = build_tools(ws)
+    usage = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+    script = [
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "list_files", "args": {}, "id": "call_1", "type": "tool_call"}],
+            response_metadata={"token_usage": usage},
+        ),
+        AIMessage(content="完成", response_metadata={"token_usage": usage}),
+    ]
+    fake = FakeLLM(script)
+    graph = build_agent_graph(fake, tools)
+    initial = {
+        "messages": [SystemMessage(content="sys"), HumanMessage(content="task")],
+        "current_agent": "Coder",
+        "current_task": "task",
+        "iteration_count": 0,
+        "max_iterations": 20,
+        "status": "running",
+        "tool_calls": [],
+        "observations": [],
+    }
+    result = graph.invoke(initial, {"configurable": {"thread_id": "u1"}})
+
+    assert result["status"] == "finished"
+    usage_events = [e for e in emitter.events if e.type is EventType.TOKEN_USAGE]
+    # 每次 LLM 调用发一次：1 次工具决策 + 1 次最终回答
+    assert len(usage_events) == fake.calls == 2
+    for e in usage_events:
+        assert e.agent == "Coder"
+        assert e.detail == usage
+        rendered = format_event(e)
+        assert "消耗 120 tokens" in rendered and "输入 100" in rendered
+
+
+def test_no_token_usage_without_response_metadata(tmp_path):
+    """P4-3-2 可观测：FakeLLM 无 response_metadata → 不发 TOKEN_USAGE（只有真实 LLM 有 usage）。"""
+    emitter.clear()
+    ws = WorkspaceManager(tmp_path / "ws")
+    tools = build_tools(ws)
+    graph = build_agent_graph(
+        FakeLLM([_tool_call(1, "list_files", {}), AIMessage(content="完成")]), tools
+    )
+    initial = {
+        "messages": [SystemMessage(content="sys"), HumanMessage(content="task")],
+        "current_agent": "Coder",
+        "current_task": "task",
+        "iteration_count": 0,
+        "max_iterations": 20,
+        "status": "running",
+    }
+    graph.invoke(initial, {"configurable": {"thread_id": "u2"}})
+    assert not [e for e in emitter.events if e.type is EventType.TOKEN_USAGE]
