@@ -39,10 +39,7 @@
     <last-used-providers />
   </component>
   <component name="DBNavigator.Project.DatabaseFileManager">
-    <open-files>
-      <object connection-id="7fa10b2e-6aef-47bb-bd38-7604c8c5ef42" object-ref="schemas/checkpoints/tables/checkpoints" />
-      <object connection-id="7fa10b2e-6aef-47bb-bd38-7604c8c5ef42" object-ref="schemas/checkpoints/tables/writes" />
-    </open-files>
+    <open-files />
   </component>
   <component name="DBNavigator.Project.DatabasePrerequisiteManager">
     <prerequisites />

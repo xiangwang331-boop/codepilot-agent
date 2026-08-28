@@ -23,6 +23,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
 
 from agent.specialists import build_supervisor_prompt
 from agent.supervisor import build_supervisor_graph
@@ -119,6 +120,18 @@ def main() -> None:
             }
 
         result = graph.invoke(graph_input, config)
+
+        # P4-2: Human Approval —— 委派需批准的 specialist 前会 interrupt 挂起。
+        # 检测挂起，向用户展示批准请求并循环输入，以 Command(resume=...) 恢复。
+        while graph.get_state(config).next:
+            snap = graph.get_state(config)
+            if not snap.interrupts:
+                break  # 有未执行节点但非 interrupt（保守退出，避免死循环）
+            for it in snap.interrupts:
+                payload = it.value or {}
+                print(f"\n[需要批准] {payload.get('question', '(无说明)')}")
+            answer = input("  输入 yes 批准 / no 拒绝：").strip().lower()
+            result = graph.invoke(Command(resume=answer or "no"), config)
 
     print("\n=== 结果 ===")
     if result.get("status") == "finished":

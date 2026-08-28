@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, ToolMessage
+from langgraph.errors import GraphBubbleUp
 
 from agent.state import AgentState
 from events.events import EventType, emit
@@ -34,8 +35,8 @@ def _brief_args(args: dict) -> str:
     parts: list[str] = []
     for k, v in args.items():
         s = str(v)
-        if len(s) > 40:
-            s = s[:37] + "..."
+        # if len(s) > 40:
+        #     s = s[:37] + "..."
         parts.append(f"{k}={s!r}")
     return ", ".join(parts)
 
@@ -113,6 +114,8 @@ def make_tools_node(tools_by_name: dict) -> Callable[[AgentState], dict[str, Any
                         agent=agent_name,
                         message=f"{name}({_brief_args(args)})",
                     )
+                except GraphBubbleUp:  # P4-2: 放行 LangGraph 框架信号（interrupt 等），不当工具错误
+                    raise
                 except Exception as e:  # noqa: BLE001
                     content = f"ERROR: {type(e).__name__}: {e}"
                     emit(
