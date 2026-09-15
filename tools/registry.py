@@ -13,17 +13,20 @@ from tools import filesystem, terminal
 from workspace.manager import WorkspaceManager
 
 
-def build_tools(ws: WorkspaceManager) -> list[BaseTool]:
-    return filesystem.build_tools(ws) + terminal.build_tools(ws)
+def build_tools(ws: WorkspaceManager, *, runner=None) -> list[BaseTool]:
+    """runner（P5 CommandRunner）：None → 本机 subprocess；传 DockerCommandRunner → 沙箱。"""
+    return filesystem.build_tools(ws) + terminal.build_tools(ws, runner=runner)
 
 
-def build_tools_map(ws: WorkspaceManager) -> dict[str, BaseTool]:
-    return {t.name: t for t in build_tools(ws)}
+def build_tools_map(ws: WorkspaceManager, *, runner=None) -> dict[str, BaseTool]:
+    return {t.name: t for t in build_tools(ws, runner=runner)}
 
 
-def build_tools_subset(ws: WorkspaceManager, names: Iterable[str]) -> list[BaseTool]:
+def build_tools_subset(
+    ws: WorkspaceManager, names: Iterable[str], *, runner=None
+) -> list[BaseTool]:
     """按名字集合过滤工具，供 P2 specialist 使用；未知名字抛 ValueError（装配期暴露手误）。"""
-    full = build_tools_map(ws)
+    full = build_tools_map(ws, runner=runner)
     names = tuple(names)
     unknown = [n for n in names if n not in full]
     if unknown:

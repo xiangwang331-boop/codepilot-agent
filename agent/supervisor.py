@@ -46,12 +46,15 @@ def build_specialist_subgraph(
     ws: WorkspaceManager,
     make_llm: Callable[[str], Any],
     condense_node: Callable | None = None,
+    *,
+    command_runner=None,
 ) -> Any:
     """构造一个 specialist 的 ReAct subgraph（复用内核，MemorySaver）。
 
     condense_node（P4-3）：透传给子图，长 specialist 会话同样受益；None 表示不加。
+    command_runner（P5）：None → 本机 subprocess；传 DockerCommandRunner → 子图 run_command 进沙箱。
     """
-    subset = build_tools_subset(ws, spec.tool_names)
+    subset = build_tools_subset(ws, spec.tool_names, runner=command_runner)
     llm = make_llm(spec.name).bind_tools(subset)
     return build_agent_graph(llm, subset, condense_node=condense_node)
 
@@ -142,6 +145,8 @@ def build_supervisor_graph(
     checkpointer=None,
     require_approval_for: tuple[str, ...] = ("coder",),
     condense_node: Callable | None = None,
+    *,
+    command_runner=None,
 ):
     """组装 supervisor 图（复用 ReAct 内核）+ specialists subgraph。
 
@@ -150,6 +155,8 @@ def build_supervisor_graph(
     - require_approval_for: 委派前需人类批准（interrupt）的 specialist 集合，默认仅 coder。
     - condense_node（P4-3 长会话压缩）：None 时用默认 make_condense_node()，supervisor
       与每个 specialist 子图都挂上；测试可传自定义阈值节点（或高阈值关闭）。
+    - command_runner（P5）：None → 各 run_command 走本机 subprocess；传 DockerCommandRunner
+      → supervisor 与每个 specialist 子图的 run_command 都进 Docker 沙箱。
     - supervisor 工具 = 只读 + delegate；挂 checkpointer（P1 SqliteSaver）。
     """
     if make_llm is None:
@@ -172,11 +179,15 @@ def build_supervisor_graph(
         )
 
     specialist_graphs = {
-        name: build_specialist_subgraph(spec, ws, make_llm, condense_node)
+        name: build_specialist_subgraph(
+            spec, ws, make_llm, condense_node, command_runner=command_runner
+        )
         for name, spec in SPECIALISTS.items()
     }
     delegate_tool = make_delegate_tool(specialist_graphs, settings, require_approval_for)
-    supervisor_tools = build_tools_subset(ws, SUPERVISOR_TOOL_NAMES) + [delegate_tool]
+    supervisor_tools = build_tools_subset(
+        ws, SUPERVISOR_TOOL_NAMES, runner=command_runner
+    ) + [delegate_tool]
     supervisor_llm = make_llm("Supervisor").bind_tools(supervisor_tools)
     return build_agent_graph(
         supervisor_llm, supervisor_tools, checkpointer=checkpointer, condense_node=condense_node

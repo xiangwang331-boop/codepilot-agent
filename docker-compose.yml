@@ -1,0 +1,32 @@
+# P6: CodePilot 的 PostgreSQL（checkpoint + 事件持久化）。
+#
+#   docker compose up -d      启动（首次会自动建库）
+#   docker compose down       停止（保留数据）
+#   docker compose down -v    停止并删除数据卷
+#
+# 连上后设 PERSISTENCE_BACKEND=postgres，DATABASE_URL 用下面这串（见 .env.example）。
+# 注意：这与 SANDBOX_MODE（P5 的 run_command 执行隔离）是两个正交的开关，
+# 开其中一个不等于开了另一个。
+# 刻意不写 container_name：本机可能已有同名的手工容器（实测撞过），
+# 让 Compose 用项目前缀自动命名（codepilot-postgres-1）即可结构性避开，
+# 也避免误删别人的同名容器。
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: codepilot
+      POSTGRES_PASSWORD: codepilot
+      POSTGRES_DB: codepilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codepilot -d codepilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
