@@ -121,12 +121,48 @@ class EventEmitter:
         self._listeners.clear()
 
 
-# 模块级单例：图节点与 main 共用
+# 模块级单例：CLI（单进程单会话）用；未绑定 ContextVar 时 emit() 回退到这里。
 emitter = EventEmitter()
+
+# P7: 当前上下文的 emitter。与 _current_thread 同理——用 ContextVar 而非全局变量，
+# 让每个会话的 worker 线程各自绑定，于是**该会话图内所有 emit 自动落到自己的 emitter**。
+# 机制同 P6 已验证的 bind_thread：LangGraph 提交节点任务时 copy_context()。
+_current_emitter: ContextVar["EventEmitter | None"] = ContextVar(
+    "codepilot_emitter", default=None
+)
+
+
+def bind_emitter(em: EventEmitter) -> Token:
+    """把当前上下文绑定到某个会话专属 emitter，返回 token 供 reset_emitter 还原。
+
+    必须在**每个 worker 线程启动时**调用（含审批恢复后新起的线程）——这是线程
+    上下文作用域，不是会话作用域，线程不会继承别的线程的绑定。
+    """
+    return _current_emitter.set(em)
+
+
+def reset_emitter(token: Token) -> None:
+    """还原 bind_emitter 之前的 emitter。"""
+    _current_emitter.reset(token)
+
+
+def current_emitter() -> EventEmitter:
+    """当前上下文的 emitter；未绑定时回退模块单例（CLI 行为零变化）。
+
+    ⚠️ 服务端代码请用 `session.emitter.emit(...)`，**不要**调模块级 `emit()`：
+    event loop 线程没有绑定任何会话 emitter，回退到模块单例后事件会进 CLI 那个
+    全局 emitter，会话订阅者永远收不到（且没有任何报错）。
+    """
+    return _current_emitter.get() or emitter
 
 
 def emit(type: EventType, agent: str, message: str, detail: dict | None = None) -> Event:
-    return emitter.emit(type, agent, message, detail)
+    # P7: 走 current_emitter() 而非直接 emitter —— 这一行改动即让 per-session
+    # emitter 全量生效。**必须改函数体**：agent/core.py、agent/condense.py、
+    # agent/supervisor.py 都是 `from events.events import emit`，import 时就把这个
+    # 函数对象绑进了各自的命名空间，monkeypatch.setattr(events.events, "emit", ...)
+    # 对它们无效（有单测把这条约束钉死）。
+    return current_emitter().emit(type, agent, message, detail)
 
 
 # 回放时打在重跑事件行尾的标记（main.py 与测试共用，避免文案漂移）

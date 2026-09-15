@@ -10,10 +10,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
-from tools.command_runner import DEFAULT_IMAGE, DockerCommandRunner
+from tools.command_runner import (
+    CONTAINER_LABEL,
+    DEFAULT_IMAGE,
+    DockerCommandRunner,
+    sweep_orphan_containers,
+)
 
 QUICKSORT_CODE = (
     "def quicksort(arr):\n"
@@ -99,3 +105,38 @@ def test_container_removed_after_session(tmp_path):
         text=True,
     )
     assert gone.returncode != 0
+
+
+# ---------- P7-6 启动清扫（真 daemon） ----------
+
+def _docker(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=60)
+
+
+def _exists(name: str) -> bool:
+    return _docker("container", "inspect", name).returncode == 0
+
+
+def test_sweep_removes_orphans_but_spares_foreign_containers():
+    """带 label 的遗留容器被回收；**不带 label 的容器毫发无损**。
+
+    ⚠️ 本用例会真删带 label 的容器 —— 别在本地正跑着 CodePilot 服务（有活会话）时跑它。
+    """
+    orphan = f"codepilot-sweep-orphan-{uuid4().hex[:8]}"
+    foreign = f"codepilot-sweep-foreign-{uuid4().hex[:8]}"
+    assert _docker(
+        "run", "-d", "--name", orphan, "--label", CONTAINER_LABEL,
+        DEFAULT_IMAGE, "sleep", "infinity",
+    ).returncode == 0
+    # 用户自己起的容器：没有 label，清扫必须看不见它
+    assert _docker("run", "-d", "--name", foreign, DEFAULT_IMAGE, "sleep", "infinity").returncode == 0
+
+    try:
+        removed, error = sweep_orphan_containers()
+        assert error is None
+        assert removed >= 1
+        assert not _exists(orphan), "带 label 的孤儿容器应被清扫"
+        assert _exists(foreign), "不带 label 的容器不该被误删"
+    finally:
+        _docker("rm", "-f", orphan)
+        _docker("rm", "-f", foreign)

@@ -12,25 +12,21 @@
 持久化（P6）由 PERSISTENCE_BACKEND 决定：
 - sqlite（默认）→ checkpoint 落 CHECKPOINT_DB_PATH（默认 data/checkpoints.db），事件仅在内存；
 - postgres      → checkpoint 与事件都落 DATABASE_URL（先 docker compose up -d）。
+
+P7 起装配与 interrupt 循环抽到 `runtime/`（与 FastAPI 服务层共用），本文件只剩
+「解析参数 + 打印 + 调 runtime」——**所有 print 及其相对顺序刻意保持不变**。
 """
 from __future__ import annotations
 
 import argparse
 import sys
 import uuid
-from contextlib import nullcontext
 
 # Windows 控制台默认可能是 GBK，强制 UTF-8 输出，避免中文乱码
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
-from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.types import Command
-
-from agent.condense import recursion_limit_for
-from agent.specialists import build_supervisor_prompt
-from agent.supervisor import build_supervisor_graph
 from config.settings import Settings
 from events.events import (
     RERUN_MARK,
@@ -41,14 +37,11 @@ from events.events import (
     format_event,
     replay_stream,
 )
-from persistence.checkpointer import (
-    PersistenceError,
-    build_checkpointer,
-    resolved_backend_label,
-)
+from persistence.checkpointer import PersistenceError, resolved_backend_label
 from persistence.event_store import EventStoreError, PostgresEventStore
-from tools.command_runner import DEFAULT_IMAGE, DockerCommandRunner, DockerSandboxError
-from workspace.manager import WorkspaceManager
+from runtime.assembly import build_runtime
+from runtime.driver import run_task
+from tools.command_runner import DockerSandboxError
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -107,6 +100,16 @@ def replay_events(thread_id: str) -> None:
         print(line + (RERUN_MARK if rerun else ""))
 
 
+def ask_approval(payloads: list[dict]) -> str:
+    """CLI 的审批交互：打印每个待批准问题，阻塞读一行输入。
+
+    返回空串也行——`runtime/driver.py` 会把空值按拒绝归一化成 "no"。
+    """
+    for payload in payloads:
+        print(f"\n[需要批准] {payload.get('question', '(无说明)')}")
+    return input("  输入 yes 批准 / no 拒绝：").strip().lower()
+
+
 def main() -> None:
     args = parse_args()
 
@@ -135,104 +138,61 @@ def main() -> None:
         print("    $env:LLM_MODEL = 'deepseek-chat'")
         return
 
-    ws = WorkspaceManager(settings.workspace_root)
-
     # 实时打印事件
     emitter.add_listener(lambda e: print(format_event(e)))
 
-    config = {
-        "configurable": {"thread_id": thread_id},
-        # P4-3: supervisor 也是 agent→tools→condense 三节点循环，按 max_iterations
-        # 放大 recursion_limit，保证 max_iterations 是真正的循环上限（默认 25 只够 ~8 轮）。
-        "recursion_limit": recursion_limit_for(settings.max_iterations),
-    }
-
-    # P5: run_command 执行宿主。SANDBOX_MODE=docker → 每会话一个长驻沙箱容器
-    #（host workspace bind mount → /workspace，会话结束 rm -f）；local（默认）→ None，
-    # 不包 context → 行为与 P0–P4 完全一致。
-    sandbox_runner = (
-        DockerCommandRunner(ws.root, image=settings.sandbox_image or DEFAULT_IMAGE)
-        if settings.sandbox_mode == "docker"
-        else None
-    )
-    if sandbox_runner:
-        print(
-            f"沙箱模式：run_command 将在 Docker 容器 {sandbox_runner.container_name} "
-            f"（镜像 {sandbox_runner.image}）内执行\n"
-        )
-
-    # P6: postgres 后端下落库事件；sqlite 后端保持 P0–P5 行为（事件只在进程内存）。
-    # 生命周期刻意**独立于** checkpointer 的 with —— 收尾的 AGENT_COMPLETED/AGENT_FAILED
-    # 发在那个 with 之外，绑在一起每次会话的最后一条事件必丢。
-    event_store = (
-        PostgresEventStore(settings.database_url)
-        if settings.persistence_backend == "postgres"
-        else None
-    )
-
+    event_store = None
     try:
-        if event_store is not None:
-            event_store.open()  # 建连 + 建表；失败抛 EventStoreError
-            emitter.add_listener(event_store.record)
-            print(f"持久化：{resolved_backend_label(settings)}")
+        # P7: 装配全部搬进 runtime/assembly.py（与 FastAPI 服务层共用同一份）。
+        # 这里只保留 print —— 输出字节不变靠这条保证。
+        with build_runtime(
+            settings, thread_id=thread_id, workspace_root=settings.workspace_root
+        ) as rt:
+            event_store = rt.event_store
 
-        # P6: 给事件打「会话归属」戳。LangGraph 提交节点任务时会 copy_context()，
-        # 所以这里 set 的值在 agent/tools/condense 节点、interrupt 恢复路径、以及
-        # 嵌套的 specialist 子图里都可见。刻意不 reset —— 收尾事件也要带 thread_id，
-        # 而一个进程只跑一个会话（P7 并发时改为每请求各自绑定）。
-        bind_thread(thread_id)
-
-        # docker 模式进/出 with = 启动容器 / rm -f 清理；local 用 nullcontext 空包
-        with (sandbox_runner or nullcontext()):
-            with build_checkpointer(settings) as checkpointer:
-                graph = build_supervisor_graph(
-                    settings, ws, checkpointer=checkpointer, command_runner=sandbox_runner
+            # P5: run_command 执行宿主。SANDBOX_MODE=docker → 每会话一个长驻沙箱容器
+            #（host workspace bind mount → /workspace，会话结束 rm -f）；local（默认）→
+            # 没有 runner，rt.sandbox() 是空包 → 行为与 P0–P4 完全一致。
+            # 刻意打印在容器**启动之前**：容器起不来时这行是用户唯一的线索。
+            if rt.runner:
+                print(
+                    f"沙箱模式：run_command 将在 Docker 容器 {rt.runner.container_name} "
+                    f"（镜像 {rt.runner.image}）内执行\n"
                 )
 
+            # P6: postgres 后端下落库事件；sqlite 后端保持 P0–P5 行为（事件只在进程内存）。
+            if event_store is not None:
+                print(f"持久化：{resolved_backend_label(settings)}")
+
+            # P6: 给事件打「会话归属」戳。LangGraph 提交节点任务时会 copy_context()，
+            # 所以这里 set 的值在 agent/tools/condense 节点、interrupt 恢复路径、以及
+            # 嵌套的 specialist 子图里都可见。刻意不 reset —— 收尾事件也要带 thread_id，
+            # 而一个进程只跑一个会话（服务端由每个 worker 线程各自绑定）。
+            bind_thread(thread_id)
+
+            # P4-2/P7: Human Approval 的挂起-恢复循环在 runtime/driver.py，与 API 共用。
+            with rt.sandbox():
                 if resume_mode:
                     # 恢复：先确认会话存在，再决定是否追加新指令
-                    prev = graph.get_state(config)
-                    n_msgs = len(prev.values.get("messages", []))
+                    n_msgs = rt.existing_message_count()
                     if n_msgs == 0:
                         print(f"错误：会话 {thread_id} 不存在或已清理。")
                         return
                     print(f"\n=== 恢复会话 {thread_id}（已有 {n_msgs} 条消息）===")
                     if task:
                         print(f"追加指令: {task}")
-                        graph_input = {"messages": [HumanMessage(content=task)]}
+                        graph_input = rt.append_input(task)
                     else:
                         graph_input = None
                 else:
                     emit(EventType.AGENT_STARTED, agent="Supervisor", message="")
                     print(f"\n=== 任务 ===\n{task}\n")
                     print(f"会话 ID: {thread_id}")
-                    graph_input = {
-                        "messages": [
-                            SystemMessage(content=build_supervisor_prompt()),
-                            HumanMessage(content=task),
-                        ],
-                        "current_agent": "Supervisor",
-                        "current_task": task,
-                        "iteration_count": 0,
-                        "max_iterations": settings.max_iterations,
-                        "status": "running",
-                        "tool_calls": [],
-                        "observations": [],
-                    }
+                    graph_input = rt.initial_input(task)
 
-                result = graph.invoke(graph_input, config)
-
-                # P4-2: Human Approval —— 委派需批准的 specialist 前会 interrupt 挂起。
-                # 检测挂起，向用户展示批准请求并循环输入，以 Command(resume=...) 恢复。
-                while graph.get_state(config).next:
-                    snap = graph.get_state(config)
-                    if not snap.interrupts:
-                        break  # 有未执行节点但非 interrupt（保守退出，避免死循环）
-                    for it in snap.interrupts:
-                        payload = it.value or {}
-                        print(f"\n[需要批准] {payload.get('question', '(无说明)')}")
-                    answer = input("  输入 yes 批准 / no 拒绝：").strip().lower()
-                    result = graph.invoke(Command(resume=answer or "no"), config)
+                result, _paused = run_task(
+                    rt.graph, graph_input, rt.config, on_interrupt=ask_approval
+                )
     except DockerSandboxError as e:
         # docker 模式 daemon/镜像缺失只在 __enter__ 冒泡（run() 内已转 ERROR 文本回流 LLM）。
         # 给用户明确指引，不 traceback。
@@ -242,10 +202,6 @@ def main() -> None:
         # 同上：基础设施问题只报错不 traceback（P5 的处理方式，对称）
         print(f"\n错误：持久化初始化失败。{e}")
         return
-    finally:
-        # 幂等；atexit 也有兜底。放 finally 保证异常路径下事件连接不悬挂
-        if event_store is not None:
-            event_store.close()
 
     # P4-3-2 可观测：会话累计真实 token 消耗（汇总每次 LLM 调用的 usage）
     usage_events = [e for e in emitter.events if e.type is EventType.TOKEN_USAGE]

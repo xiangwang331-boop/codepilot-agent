@@ -15,10 +15,15 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable
 from uuid import uuid4
 
 DEFAULT_IMAGE = "codepilot-sandbox:py3.12"
 DEFAULT_WORKDIR = "/workspace"
+
+# P7: 所有 CodePilot 起的沙箱容器都带这个 label，服务端启动时按 label 清扫孤儿
+# （`docker ps -a --filter label=codepilot.managed=1`），比按名字前缀筛安全。
+CONTAINER_LABEL = "codepilot.managed=1"
 
 # docker CLI 基础设施错误标记（daemon 挂 / 镜像缺 / 容器不存在等），
 # 命中即判定为"基础设施问题"而非 agent 代码问题，回流 "ERROR: Docker ..."。
@@ -36,6 +41,57 @@ _INFRA_MARKERS = (
 
 class DockerSandboxError(RuntimeError):
     """Docker 基础设施问题（daemon 未起 / 镜像缺失等），不是 agent 代码的问题。"""
+
+
+def _docker_cli(args: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
+    """直调 docker CLI（argv 不 shell）。模块级函数 = 清扫逻辑的测试注入点。"""
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+
+def sweep_orphan_containers(
+    *, run_cli: Callable[[list[str], int], subprocess.CompletedProcess] | None = None
+) -> tuple[int, str | None]:
+    """删掉**所有带 `CONTAINER_LABEL` 的容器**，返回 (删除数量, 错误信息或 None)。
+
+    服务端**启动时**跑一次：那一刻本进程还没建过任何容器，所以带 label 的必然是上一个
+    进程崩溃 / 被硬杀（`atexit` 没跑到）留下的孤儿 —— 它们各占一份 bind mount 和一份
+    workspace 目录，不清就会随重启累积。
+
+    刻意按 **label** 筛而不是 `--filter name=codepilot-sandbox-`：名字前缀会把用户自己
+    手起的同名容器一并误删（label 是「我们起的」这件事本身，名字不是）。
+
+    ⚠️ 前提：同一时刻只有一个 CodePilot 进程。多进程并存时后启动的会把先启动的活容器
+    当孤儿删掉 —— 本机单用户开发下成立，多实例部署前必须先解决归属问题（见 DESIGN.md）。
+
+    任何失败都**不抛**：清扫是尽力而为的卫生工作，不该因为它挡住服务启动。
+    """
+    cli = run_cli or _docker_cli
+    try:
+        listed = cli(["docker", "ps", "-aq", "--filter", f"label={CONTAINER_LABEL}"], 30)
+    except Exception as e:  # noqa: BLE001
+        return 0, f"{type(e).__name__}: {e}"
+    if listed.returncode != 0:
+        return 0, (listed.stderr or "").strip()[:300] or f"exit_code={listed.returncode}"
+    ids = [line.strip() for line in (listed.stdout or "").splitlines() if line.strip()]
+
+    removed = 0
+    for container_id in ids:
+        try:
+            proc = cli(["docker", "rm", "-f", container_id], 60)
+        except Exception as e:  # noqa: BLE001
+            return removed, f"{type(e).__name__}: {e}"
+        if proc.returncode == 0:
+            removed += 1
+        else:
+            return removed, (proc.stderr or "").strip()[:300] or f"exit_code={proc.returncode}"
+    return removed, None
 
 
 def _format_run_output(returncode: int, stdout: str, stderr: str) -> str:
@@ -126,6 +182,9 @@ class DockerCommandRunner:
         return [
             "docker", "run", "-d",
             "--name", self.container_name,
+            # P7: 打上归属标签，服务端启动时按它清扫崩溃遗留的孤儿容器。
+            # 刻意不用 `--filter name=codepilot-sandbox-`——那会误伤用户自己起的同名容器。
+            "--label", CONTAINER_LABEL,
             "-v", f"{host}:{self.container_workdir}",
             "-w", self.container_workdir,
             self.image, "sleep", "infinity",
@@ -158,6 +217,13 @@ class DockerCommandRunner:
         self._started = True
 
     def stop(self) -> None:
+        try:
+            # P7: 释放 atexit 持有的强引用。`atexit.register(self.stop)` 注册的是绑定方法，
+            # 它让**对象本身永不回收**（实测 alive=True）——CLI 一个进程一个容器无所谓，
+            # 但服务端每会话一个容器，不摘就是持续泄漏。stop 幂等，重复调用无副作用。
+            atexit.unregister(self.stop)
+        except Exception:  # noqa: BLE001
+            pass
         if not self._started:
             return
         try:

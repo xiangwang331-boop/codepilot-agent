@@ -13,6 +13,9 @@ dependencies = [
     # 纯 Python 版仍需要 host 上的 libpq，Windows 上没装 PG 客户端会 ImportError。
     "langgraph-checkpoint-postgres>=3.1.2",
     "psycopg[binary]>=3.2",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
+    "psycopg-pool>=3.3.1",
 ]
 
 [dependency-groups]

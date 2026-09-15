@@ -24,12 +24,14 @@ from agent.supervisor import build_supervisor_graph
 from conftest import FakeLLM, _tool_call
 from config.settings import Settings
 from tools.command_runner import (
+    CONTAINER_LABEL,
     DEFAULT_IMAGE,
     DEFAULT_WORKDIR,
     DockerCommandRunner,
     DockerSandboxError,
     LocalCommandRunner,
     _format_run_output,
+    sweep_orphan_containers,
 )
 from tools.registry import build_tools, build_tools_map
 from workspace.manager import WorkspaceManager
@@ -157,6 +159,8 @@ def test_docker_run_creates_container_then_exec_cleanup(tmp_path):
     run_call = next(c for c in calls if c[1] == "run")
     assert run_call == [
         "docker", "run", "-d", "--name", "ctr-abc",
+        # P7: 每个沙箱容器都带归属 label，服务端起服务时按它清扫孤儿
+        "--label", CONTAINER_LABEL,
         "-v", f"{host}:{DEFAULT_WORKDIR}", "-w", DEFAULT_WORKDIR,
         "img:1", "sleep", "infinity",
     ]
@@ -340,3 +344,52 @@ def test_supervisor_threads_runner_into_specialist(tmp_path):
 
     assert result["status"] == "finished"
     assert fake.calls == [("pytest -q", 60)]  # 子图里的 run_command 走了注入的宿主
+
+
+# ---------- P7-6 启动清扫（按 label 删遗留容器，全 fake 不碰 daemon） ----------
+
+def test_sweep_removes_labelled_containers_and_filters_by_label():
+    """清扫删掉带 label 的遗留容器，且**筛的是 label 不是名字前缀**。"""
+    fake, calls = _docker_cli({"ps": (0, "aaa111\nbbb222\n", ""), "rm": (0, "", "")})
+
+    removed, error = sweep_orphan_containers(run_cli=fake)
+
+    assert (removed, error) == (2, None)
+    listed = calls[0]
+    assert listed[:2] == ["docker", "ps"]
+    assert "-aq" in listed
+    assert f"label={CONTAINER_LABEL}" in listed
+    # 名字前缀筛会误伤用户自己起的同名容器（本机 5432 那个 codepilot-postgres 是别人的）
+    assert not any("name=" in a for a in listed)
+    assert calls[1:] == [["docker", "rm", "-f", "aaa111"], ["docker", "rm", "-f", "bbb222"]]
+
+
+def test_sweep_no_orphans_is_a_silent_noop():
+    fake, calls = _docker_cli({"ps": (0, "", "")})
+
+    assert sweep_orphan_containers(run_cli=fake) == (0, None)
+    assert len(calls) == 1  # 只查了一次，没发任何 rm
+
+
+def test_sweep_never_raises_when_daemon_is_down():
+    """清扫是尽力而为的卫生工作：daemon 挂了给提示即可，绝不挡住服务启动。"""
+    fake, _ = _docker_cli({"ps": (1, "", "Cannot connect to the Docker daemon at ...")})
+    removed, error = sweep_orphan_containers(run_cli=fake)
+    assert removed == 0
+    assert "Cannot connect to the Docker daemon" in error
+
+    def boom(args, timeout):
+        raise FileNotFoundError("docker 不在 PATH 里")
+
+    removed, error = sweep_orphan_containers(run_cli=boom)
+    assert removed == 0
+    assert "FileNotFoundError" in error
+
+
+def test_sweep_reports_partial_failure_without_raising():
+    fake, _ = _docker_cli({"ps": (0, "aaa111\nbbb222\n", ""), "rm": (1, "", "container is locked")})
+
+    removed, error = sweep_orphan_containers(run_cli=fake)
+
+    assert removed == 0
+    assert "container is locked" in error

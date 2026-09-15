@@ -20,8 +20,9 @@ from agent.graph import build_agent_graph
 from conftest import FakeLLM, _tool_call
 from config.settings import Settings
 from events.events import EventType, bind_thread, emit, emitter, reset_thread
-from persistence.checkpointer import build_checkpointer
+from persistence.checkpointer import PersistenceError, build_checkpointer
 from persistence.event_store import PostgresEventStore
+from persistence.pool import build_pool, close_pool
 from tools.registry import build_tools
 from workspace.manager import WorkspaceManager
 
@@ -203,3 +204,113 @@ def test_pg_events_persist_ordered_and_isolated(tmp_path):
 
     # 时间戳以秒精度字符串往返（不静默腐化成 datetime 或丢时区）
     assert a[0].timestamp.endswith("+00:00") and len(a[0].timestamp) == 25
+
+
+# ---------------------------------------------------------------- P7: 连接池
+
+
+def test_build_pool_unreachable_database_is_friendly(tmp_path):
+    """库不可达 → PersistenceError（带能照着做的提示），不是裸 psycopg 异常。"""
+    settings = _settings(tmp_path, database_url="postgresql://nobody:nope@127.0.0.1:1/none")
+    with pytest.raises(PersistenceError) as ei:
+        build_pool(settings)
+    message = str(ei.value)
+    assert "Traceback" not in message
+    assert "docker compose up -d" in message
+    assert "nope" not in message, "报错信息里不能带密码"
+
+
+def test_pool_backed_saver_roundtrip_and_reuse(tmp_path):
+    """一份池 + 每会话一个 saver：跨会话复用同一池，状态各自完整。
+
+    这正是 P7 服务端的持久化形态（见 persistence/pool.py 的说明）。
+    """
+    pool = build_pool(_settings(tmp_path))
+    try:
+        ws = WorkspaceManager(tmp_path / "ws")
+        t1, t2 = _tid(), _tid()
+        for tid in (t1, t2):
+            with build_checkpointer(_settings(tmp_path), pool=pool) as saver:
+                graph = build_agent_graph(
+                    FakeLLM(_write_script()), build_tools(ws), checkpointer=saver
+                )
+                assert graph.invoke(_initial(), {"configurable": {"thread_id": tid}})[
+                    "status"
+                ] == "finished"
+
+        # 换一个 saver 实例（同池）读回 t1：state 全在库里，与对象身份无关
+        with build_checkpointer(_settings(tmp_path), pool=pool) as saver:
+            graph = build_agent_graph(FakeLLM([]), build_tools(ws), checkpointer=saver)
+            assert len(graph.get_state({"configurable": {"thread_id": t1}}).values["messages"]) == 5
+            assert (
+                len(graph.get_state({"configurable": {"thread_id": t2}}).values["messages"]) == 5
+            )
+    finally:
+        close_pool(pool)
+
+
+def test_pool_shares_safely_across_concurrent_sessions(tmp_path):
+    """N 个会话线程共用一份池、各持一个 saver —— 互不串台、都不丢数据。
+
+    PostgresSaver 自带 lock 只覆盖一次 DB 往返（不覆盖 LLM 调用），所以共享池是安全的；
+    这条用例把「安全」钉成可执行的断言。
+    """
+    import threading
+
+    pool = build_pool(_settings(tmp_path))
+    ws = WorkspaceManager(tmp_path / "ws")
+    tids = [_tid() for _ in range(4)]
+    errors: list = []
+
+    def worker(tid: str) -> None:
+        try:
+            with build_checkpointer(_settings(tmp_path), pool=pool) as saver:
+                graph = build_agent_graph(
+                    FakeLLM(_write_script()), build_tools(ws), checkpointer=saver
+                )
+                graph.invoke(_initial(), {"configurable": {"thread_id": tid}})
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    try:
+        threads = [threading.Thread(target=worker, args=(t,)) for t in tids]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors, f"并发会话不该抛异常: {errors}"
+
+        with build_checkpointer(_settings(tmp_path), pool=pool) as saver:
+            graph = build_agent_graph(FakeLLM([]), build_tools(ws), checkpointer=saver)
+            for tid in tids:
+                st = graph.get_state({"configurable": {"thread_id": tid}})
+                assert len(st.values["messages"]) == 5, f"{tid} 的 checkpoint 不完整"
+    finally:
+        close_pool(pool)
+
+
+def test_pool_backed_event_store_persists_and_never_closes_pool(tmp_path):
+    """池化后 record() 仍「永不抛」且真落库；close() 不得关掉共享池。"""
+    pool = build_pool(_settings(tmp_path))
+    tid = _tid()
+    store = PostgresEventStore(TEST_DATABASE_URL, pool=pool, retry_cooldown=30.0)
+    emitter.clear()
+    try:
+        store.open()
+        emitter.add_listener(store.record)
+        token = bind_thread(tid)
+        try:
+            emit(EventType.AGENT_STEP, agent="a", message="pooled")
+        finally:
+            reset_thread(token)
+    finally:
+        emitter.clear()
+        store.close()
+
+    assert store.dropped_count == 0, "池化后不该降级丢事件"
+    assert pool.closed is False, "store.close() 关掉共享池会让之后所有会话的事件全丢"
+
+    with PostgresEventStore(TEST_DATABASE_URL, pool=pool) as reader:
+        events = reader.load(tid)
+    close_pool(pool)
+    assert [e.message for e in events] == ["pooled"]

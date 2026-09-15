@@ -14,6 +14,10 @@
 - PERSISTENCE_BACKEND : 持久化后端（P6）。sqlite = SqliteSaver + 事件仅内存（默认，P0–P5 行为）；
   postgres = PostgresSaver + 事件落库，共用 DATABASE_URL
 - DATABASE_URL : postgres 后端的连接串；sqlite 后端下不使用
+- API_HOST / API_PORT : 服务监听地址（P7）；仅 `python -m api` 入口使用，
+  用 `uvicorn api.app:create_app --factory` 起服务时由 uvicorn 自己的参数决定
+- SESSION_IDLE_TIMEOUT : 服务端会话空闲回收秒数（P7），默认 1800；running 的会话不回收
+- SWEEP_SANDBOX_ON_START : 服务启动时是否清扫遗留沙箱容器（P7），默认 on
 
 启动时会加载项目根目录的 `.env`（不存在则退回 `.env.example`），
 但已存在的环境变量优先，不会被覆盖。
@@ -58,6 +62,14 @@ def _env_persistence_backend() -> str:
     return raw
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    """读一个布尔开关。接受 on/off/true/false/1/0/yes/no（大小写不敏感）。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _load_dotenv() -> None:
     """加载 .env（优先）或 .env.example，但不覆盖已有环境变量。"""
     project_root = Path(__file__).resolve().parent.parent
@@ -97,6 +109,13 @@ class Settings:
     persistence_backend: str = "sqlite"
     # P6 postgres 模式连接串；sqlite 模式不使用
     database_url: str = ""
+    # P7 服务层：监听地址（python -m api 入口用）；uvicorn --factory 起服务时由 uvicorn 决定
+    api_host: str = "127.0.0.1"
+    api_port: int = 8000
+    # P7 服务层：会话空闲多久回收（秒）。回收只碰 idle/awaiting_approval，running 永不回收
+    session_idle_timeout: float = 1800.0
+    # P7 服务层：启动时清扫上次进程留下的沙箱容器（按 label，见 tools/command_runner.py）
+    sweep_sandbox_on_start: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -121,4 +140,8 @@ class Settings:
             sandbox_image=os.getenv("SANDBOX_IMAGE") or None,
             persistence_backend=_env_persistence_backend(),
             database_url=(os.getenv("DATABASE_URL") or "").strip(),
+            api_host=os.getenv("API_HOST", "127.0.0.1"),
+            api_port=int(os.getenv("API_PORT", "8000")),
+            session_idle_timeout=float(os.getenv("SESSION_IDLE_TIMEOUT", "1800")),
+            sweep_sandbox_on_start=_env_flag("SWEEP_SANDBOX_ON_START"),
         )

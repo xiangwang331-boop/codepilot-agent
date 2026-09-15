@@ -52,7 +52,11 @@
     <filters />
   </component>
   <component name="DBNavigator.Project.Settings">
-    <states />
+    <states>
+      <state category="SECRET_STORAGE_MIGRATION">
+        <migrated value="true" />
+      </state>
+    </states>
     <connections>
       <connection source-id="" id="7fa10b2e-6aef-47bb-bd38-7604c8c5ef42" active="true" signed="true">
         <database>

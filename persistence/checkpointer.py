@@ -41,14 +41,19 @@ class PersistenceError(RuntimeError):
 
 
 @contextmanager
-def build_checkpointer(settings: Settings) -> Iterator[object]:
+def build_checkpointer(settings: Settings, *, pool: object | None = None) -> Iterator[object]:
     """按 settings.persistence_backend 产出 checkpointer。
 
     sqlite（默认）→ data/checkpoints.db（会先建父目录）；
     postgres       → settings.database_url 指向的库（首次自动建表）。
+
+    P7: `pool` 传入共享连接池（`persistence.pool.build_pool`）时，postgres 分支改成
+    在这份池上建一个**本会话专属**的 saver。**契约：传 pool 就意味着 schema 已建好**
+    —— build_pool() 已经跑过 setup()，这里不再跑 DDL。sqlite 分支忽略 pool
+    （SqliteSaver 必须是全进程共用的那一个实例，见 runtime/assembly.py）。
     """
     if settings.persistence_backend == "postgres":
-        with _postgres_checkpointer(settings) as saver:
+        with _postgres_checkpointer(settings, pool=pool) as saver:
             yield saver
     else:
         with _sqlite_checkpointer(settings) as saver:
@@ -66,12 +71,21 @@ def _sqlite_checkpointer(settings: Settings) -> Iterator[object]:
 
 
 @contextmanager
-def _postgres_checkpointer(settings: Settings) -> Iterator[object]:
+def _postgres_checkpointer(
+    settings: Settings, *, pool: object | None = None
+) -> Iterator[object]:
     if PostgresSaver is None:
         raise PersistenceError(
             "postgres 后端需要 psycopg（含 libpq），当前环境不可用。\n"
             "  → 重装依赖: uv sync（pyproject 已声明 psycopg[binary]）"
         )
+
+    if pool is not None:
+        # 共享池分支：schema 由 build_pool() 建好，这里不碰 DDL、不建连。
+        # 构造不碰网络，所以不需要 except —— 真抛了就是代码问题，让它冒泡。
+        yield PostgresSaver(pool)
+        return
+
     if not settings.database_url:
         raise PersistenceError(
             "PERSISTENCE_BACKEND=postgres 需要 DATABASE_URL。\n"

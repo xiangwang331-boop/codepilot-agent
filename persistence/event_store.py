@@ -18,6 +18,8 @@ from __future__ import annotations
 import atexit
 import json
 import sys
+import time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Callable
 
@@ -133,16 +135,33 @@ class PostgresEventStore:
     生命周期与 checkpointer **分开管理**：checkpointer 的 with 块在 main.py 里
     结束于结果打印之前，而收尾的 AGENT_COMPLETED / AGENT_FAILED 事件发在那之后 ——
     绑在一起每次会话的最后一条事件必丢。这里用 `open()`/`close()` + atexit 兜底。
+
+    P7：服务端传 `pool=`（全进程共享连接池）时，每条 SQL 借还一条连接而不是常驻一条；
+    `retry_cooldown=` 让 `_disabled` 闩锁到期自动恢复（CLI 不传 = P6 的永久闩锁）。
     """
 
-    def __init__(self, database_url: str, *, connect: Callable | None = None):
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        connect: Callable | None = None,
+        pool: object | None = None,
+        retry_cooldown: float | None = None,
+    ):
         self.database_url = database_url
         self._connect_factory = connect  # 测试 seam（默认 psycopg.connect）
-        self._conn = None
+        self._pool = pool  # P7：共享连接池时每条 SQL 借还一条连接
+        self._conn = None  # 不带池时才用（CLI / 测试的独占连接）
+        self._ready = False  # 建表是否已跑过（带池时 _conn 恒为 None，不能用它当标志）
         self._disabled = False
         self._failures = 0
         self._dropped = 0
         self._warned = False
+        # P7：长驻服务里 _disabled 是**永久闩锁且没有恢复路径** —— 一次 PG 抖动 =
+        # 本进程余生的所有会话都不再落事件。CLI 默认 None（保持 P6 的永久闩锁：
+        # 进程很快就退，不值得重试）；服务端传秒数，失败后冷却到期自动重试。
+        self._retry_cooldown = retry_cooldown
+        self._disabled_until = 0.0
         atexit.register(self.close)
 
     # ---- 可替换 seam（单测用，对应 P5 DockerCommandRunner._run_cli 的思路）----
@@ -160,12 +179,27 @@ class PostgresEventStore:
             connect_timeout=5,
         )
 
+    @contextmanager
+    def _connection(self):
+        """借一条连接用完即还。
+
+        带池（P7 服务端）→ 每条 SQL 从池里借还，N 个会话共用一个池；
+        不带池（CLI / 单测）→ 复用自己那条独占连接（P6 行为）。
+        """
+        if self._pool is not None:
+            with self._pool.connection() as conn:
+                yield conn
+            return
+        if self._conn is None:
+            self._conn = self._connect()
+        yield self._conn
+
     def _execute(self, sql: str, params: tuple | None = None) -> None:
-        with self._conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(sql, params)
 
     def _query(self, sql: str, params: tuple | None = None) -> list:
-        with self._conn.cursor() as cur:
+        with self._connection() as conn, conn.cursor() as cur:
             cur.execute(sql, params)
             return cur.fetchall()
 
@@ -173,12 +207,12 @@ class PostgresEventStore:
 
     def open(self) -> "PostgresEventStore":
         """建连 + 建表（幂等）。失败抛 EventStoreError。"""
-        if self._conn is not None:
+        if self._ready:
             return self
         try:
-            self._conn = self._connect()
             self._execute(EVENTS_DDL)
             self._execute(EVENTS_INDEX_DDL)
+            self._ready = True
         except Exception as e:  # noqa: BLE001
             self._conn = None
             if isinstance(e, EventStoreError):
@@ -187,7 +221,12 @@ class PostgresEventStore:
         return self
 
     def close(self) -> None:
-        """幂等关闭（atexit 兜底也会调）。"""
+        """幂等关闭（atexit 兜底也会调）。
+
+        **只关自己那条独占连接，绝不动共享 pool** —— 池是应用层的资产，
+        会话（或 atexit）把它关掉会让之后所有会话的事件全丢。带池时这里基本是 no-op。
+        """
+        self._ready = False
         if self._conn is None:
             return
         try:
@@ -212,11 +251,11 @@ class PostgresEventStore:
 
     def record(self, event: Event) -> None:
         """把一条事件写库。**契约：永不抛异常**（见模块 docstring）。"""
-        if self._disabled:
+        if self._disabled and not self._try_reenable():
             self._dropped += 1
             return
         try:
-            if self._conn is None:
+            if not self._ready:
                 self.open()
             self._execute(_INSERT_SQL, event_row(event))
             self._failures = 0
@@ -231,16 +270,31 @@ class PostgresEventStore:
                 )
             if self._failures >= _FAILURE_THRESHOLD:
                 self._disabled = True
+                if self._retry_cooldown is None:
+                    hint = "本次运行不再尝试写入。"
+                else:
+                    self._disabled_until = time.monotonic() + self._retry_cooldown
+                    hint = f"暂停写入 {self._retry_cooldown:.0f} 秒后重试。"
                 print(
-                    f"警告: 事件持久化连续失败 {self._failures} 次，本次运行不再尝试写入。",
+                    f"警告: 事件持久化连续失败 {self._failures} 次，{hint}",
                     file=sys.stderr,
                 )
+
+    def _try_reenable(self) -> bool:
+        """冷却到期就解除闩锁，返回是否恢复写入（见 `retry_cooldown` 的说明）。"""
+        if self._retry_cooldown is None or time.monotonic() < self._disabled_until:
+            return False
+        self._disabled = False
+        self._failures = 0
+        self._disabled_until = 0.0
+        print("提示: 事件持久化冷却结束，恢复写入。", file=sys.stderr)
+        return True
 
     # ---- 读（回放）----
 
     def load(self, thread_id: str, *, limit: int | None = None) -> list[Event]:
         """按写入顺序读回一个会话的事件流（回放用）。"""
-        if self._conn is None:
+        if not self._ready:
             self.open()
         sql = _SELECT_SQL + (" LIMIT %s" if limit is not None else "")
         params = (thread_id, limit) if limit is not None else (thread_id,)
