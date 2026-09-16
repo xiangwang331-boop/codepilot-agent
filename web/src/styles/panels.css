@@ -1,0 +1,343 @@
+/* 检查器里的各个面板：审批、结果、产出文件、token、会话信息。 */
+
+.panel {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.panel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+}
+.panel__head:hover {
+  background: var(--surface-2);
+}
+.panel__head--static {
+  cursor: default;
+}
+.panel__head--static:hover {
+  background: transparent;
+}
+.panel__count {
+  font-weight: 400;
+  color: var(--fg-mute);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.panel__caret {
+  color: var(--fg-mute);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+.panel__caret[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+.panel__body {
+  padding: 0 var(--sp-3) var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.panel__empty {
+  font-size: var(--fs-sm);
+  color: var(--fg-mute);
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+
+/* ---------------------------------------------------------------- 审批 */
+
+.approval {
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-soft);
+  border-radius: var(--radius);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.approval--banner {
+  margin-bottom: var(--sp-2);
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  backdrop-filter: blur(6px);
+}
+
+.approval__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-weight: 700;
+  color: var(--warn);
+  font-size: var(--fs-md);
+}
+
+.approval__question {
+  font-size: var(--fs-sm);
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.approval__consequence {
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2);
+  line-height: 1.6;
+}
+
+.approval__actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+.approval__actions button {
+  flex: 1;
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  font-weight: 650;
+  border: 1px solid transparent;
+}
+.approval__approve {
+  background: var(--ok);
+  color: #fff;
+}
+.approval__reject {
+  background: transparent;
+  border-color: var(--err) !important;
+  color: var(--err);
+}
+.approval__actions button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.approval__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------- 结果 */
+
+.result__text {
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  color: var(--fg);
+}
+
+.codeblock {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin: 0;
+}
+.codeblock__lang {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-mute);
+  padding: 2px var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface-2);
+}
+.codeblock pre {
+  margin: 0;
+  padding: var(--sp-2);
+  font-size: var(--fs-sm);
+  overflow-x: auto;
+  white-space: pre;
+  color: var(--fg);
+}
+
+/* ---------------------------------------------------------------- 产出文件 */
+
+.fileitem {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.fileitem__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 5px var(--sp-2);
+  text-align: left;
+  min-width: 0;
+}
+.fileitem__head:hover {
+  background: var(--surface-3);
+}
+.fileitem__path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.fileitem__badge {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+.fileitem[data-deleted="true"] .fileitem__path {
+  text-decoration: line-through;
+  color: var(--fg-mute);
+}
+
+.fileitem__body {
+  border-top: 1px solid var(--line-soft);
+  padding: var(--sp-2);
+}
+.fileitem__history {
+  margin: 0 0 var(--sp-2);
+  padding-left: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--fg-mute);
+}
+
+/* ---------------------------------------------------------------- token */
+
+.tokentable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+}
+.tokentable th {
+  text-align: right;
+  color: var(--fg-mute);
+  font-weight: 500;
+  padding: 2px 4px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.tokentable th:first-child {
+  text-align: left;
+}
+.tokentable td {
+  text-align: right;
+  padding: 2px 4px;
+  color: var(--fg-dim);
+}
+.tokentable td:first-child {
+  text-align: left;
+  color: var(--fg);
+}
+.tokentable tr[data-total="true"] td {
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+  font-weight: 650;
+}
+
+/* ---------------------------------------------------------------- 会话信息 */
+
+.meta {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px var(--sp-2);
+  font-size: var(--fs-xs);
+  padding: 0 var(--sp-3) var(--sp-3);
+}
+.meta dt {
+  color: var(--fg-mute);
+}
+.meta dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------- 连接状态 */
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.conn__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  flex: none;
+}
+.conn[data-state="open"] .conn__dot {
+  background: var(--ok);
+}
+.conn[data-state="connecting"] .conn__dot,
+.conn[data-state="reconnecting"] .conn__dot {
+  background: var(--warn);
+}
+.conn[data-state="fatal"] .conn__dot {
+  background: var(--err);
+}
+
+/* 致命状态的提示条 */
+.fatal {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+  background: var(--err-soft);
+  border-radius: var(--radius-sm);
+  color: var(--err);
+  font-size: var(--fs-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.fatal button {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-weight: 600;
+  padding: 3px 12px;
+}
+
+/* 操作失败的浮动提示 */
+.toast {
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+  background: var(--err-soft);
+  border-radius: var(--radius-sm);
+  color: var(--err);
+  font-size: var(--fs-sm);
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+.toast button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  text-decoration: underline;
+  padding: 0;
+  font-size: var(--fs-xs);
+}

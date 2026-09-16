@@ -8,12 +8,14 @@ LangGraph 驱动的 Multi-Agent 软件工程运行时。P0 阶段：**单 Agent 
 >
 > 完整设计/演进见 `DESIGN.md`；项目记忆与工作约定见 `CLAUDE.md`。
 
-当前阶段 **P7**：Supervisor + 6 个 Specialist 多 agent 编排 + Human Approval（interrupt）+
+当前阶段 **P8**：Supervisor + 6 个 Specialist 多 agent 编排 + Human Approval（interrupt）+
 Error Recovery + Condense（消息数 + token 预算双守卫）+ 实时 token 消耗可观测 +
 Docker Sandbox（run_command 执行隔离）+ PostgreSQL 持久化（checkpoint 与事件流落库）+
 **常驻服务层**（FastAPI REST + WebSocket：浏览器建会话、实时看多 agent 干活、遇到审批点按钮；
-每会话一个独立 workspace 目录 + 一个自己的沙箱容器，由服务端接管生命周期）。CLI 与 Web
-共用同一套装配与挂起语义，CLI 行为逐字不变。
+每会话一个独立 workspace 目录 + 一个自己的沙箱容器，由服务端接管生命周期）+
+**React Web UI**（`web/`：委派时间线折叠、产出文件面板、令牌面板、事件过滤、`?session=` 深链、
+深色默认主题；构建产物托管在 `api/static/`）。CLI 与 Web 共用同一套装配与挂起语义，
+CLI 行为逐字不变。
 
 ## 目录结构
 
@@ -48,12 +50,18 @@ codepilot/
 │   ├── routes.py           # REST 端点（建会话 / 发指令 / 审批 / 删会话 / 事件查询）
 │   ├── ws.py               # WS 订阅端点（status + event 信封）
 │   ├── schemas.py          # Pydantic 请求/响应模型
-│   └── static/index.html   # 单文件测试页（vanilla JS）
+│   └── static/             # P8：React 构建产物落点（已 gitignore，先 npm run build）
+├── web/                    # P8：React 前端（源码进 git，构建产物进 api/static）
+│   ├── src/api/            # types.ts（JSON 契约镜像）/ client.ts（REST + 错误归一化）/ stream.ts（WS 客户端）
+│   ├── src/model/          # **纯函数层**（折叠 / 判重 / token 聚合 / 文件重建 / 忙闲判定）—— vitest 只测这层
+│   │   └── __fixtures__/   # 后端真实事件流夹具（由 tests/test_web_ui_contract.py 每次运行重写）
+│   ├── src/hooks/ + components/   # 薄渲染层（React 19，零其他运行时依赖）
+│   └── src/styles/         # 手写 CSS + 设计令牌（深色默认，[data-theme] 切浅色）
 ├── config/
 │   └── settings.py         # 环境变量配置（含 context_limit / persistence_backend / api_host 等）
 ├── docker-compose.yml      # P6：PostgreSQL（docker compose up -d）
 ├── data/                   # checkpoints.db（sqlite 后端，已 gitignore）
-└── tests/                  # 181 个 pytest：FakeLLM 闭环 + supervisor + condense + token + 沙箱/持久化 + API
+└── tests/                  # 205 个 pytest：FakeLLM 闭环 + supervisor + condense + token + 沙箱/持久化 + API + UI 契约
 ```
 
 ## 安装
@@ -151,7 +159,7 @@ CLI 之外多了一个常驻服务：浏览器建会话、发需求、实时看�
 
 ```powershell
 .venv\Scripts\python.exe -m uvicorn api.app:create_app --factory --port 8000
-# 浏览器打开 http://127.0.0.1:8000/  （单文件测试页，vanilla JS，直接调下面的 REST + WS）
+# 浏览器打开 http://127.0.0.1:8000/  （P8 的 React UI；需先 npm run build，见下节）
 ```
 
 > `--factory` 不能省：`create_app` 是**工厂函数**，刻意不写模块级 `app = create_app()`
@@ -191,13 +199,56 @@ CLI 之外多了一个常驻服务：浏览器建会话、发需求、实时看�
   回收上个进程遗留的沙箱容器（防异常退出后容器堆积）。**按 label 筛而不是按名字前缀**——后者会
   误删你自己起的同名容器。多进程部署前必须先关掉 `SWEEP_SANDBOX_ON_START`，否则会互相删容器。
 
+## Web UI（P8）
+
+React 19 + TypeScript + Vite，**后端一行不改**（P7 已经在推结构化事件，前端只是把它渲染出来）。
+两个模式：
+
+```powershell
+# --- 生产态：构建产物流到 api/static，由 FastAPI 的 StaticFiles 托管（一个进程）---
+cd web
+npm ci                # 首次用 npm install（会生成 package-lock.json）
+npm run build         # → ../api/static/{index.html, assets/*}
+cd ..
+.venv\Scripts\python.exe -m uvicorn api.app:create_app --factory --port 8000
+
+# --- 开发态：Vite dev server + HMR，代理 /sessions 到后端（另开一个终端跑上面的 uvicorn）---
+cd web
+npm run dev           # http://127.0.0.1:5173/
+```
+
+> **构建产物不进 git**，所以新克隆下 `GET /` 是 404 —— 先 `npm run build`。
+> 开发态之所以用 Vite 代理而不是 CORS：全仓没有 `CORSMiddleware`，加它就得改 `api/app.py`。
+
+界面做的事：
+
+- **委派时间线**——`ToolCallStarted(delegate)` 开一张卡（含 specialist + 任务），该 specialist 的
+  子事件归入卡内，`ToolCallCompleted` 收口。**批准挂起时卡片保持打开态**，这本身就是「有个东西
+  卡住了、等你点按钮」的可视化（原理见下）。恢复后子事件会整段重放，同一张卡标 `↻ 重跑` 并把
+  `attempts` 加一，而不是平白多出一张卡。
+- **产出文件面板**——从 `write_file`（带完整 `content`）/`edit_file`（`old_string`/`new_string`）
+  的事件参数在客户端重建「本会话写过的文件」。**只能重建「写入」，看不到 agent 读过的文件原文。**
+- **令牌面板 / 结果面板 / 事件过滤 / 多会话侧栏 / `?session=<id>` 深链**（可刷新可分享）。
+- 深色默认，右上角切浅色（令牌落 `localStorage`）。
+
+三个值得知道的点：
+
+- **挂起在事件流里的样子是「一张收不了口的卡」**：`interrupt()` 在 `delegate` 的执行体内抛出，
+  会**就地中断 tools 节点的循环**，所以那一次委派的 `ToolCallCompleted` 永远不会发出来。
+  不变量是 **开块数 = 收口数 + 1**；这不是 bug，是前端判定「待批准」的唯一信号。
+- **「一批里两个委派」会看到重放**：答完第一个中断后节点从头重跑，已批准的那次委派连同它的
+  子事件会**逐字再来一遍**（第 11 条事件与第 2 条逐字相同），所以判重逻辑必须认得出它。
+- **一轮里若出现两个都需要批准的委派，第二个会被静默丢弃**——这是 P7 遗留的后端缺陷
+  （不与 P8 相关，未修），现象是事件流以一张收不了口的卡 + 一条根 `AgentFailed("状态 running")`
+  结束。详见 `DESIGN.md` §7 的 P8 记录。
+
 ## 测试
 
 ```powershell
 .venv\Scripts\python.exe -m pytest -v
 ```
 
-181 个 pytest 全过（另有 9 个集成用例在环境不满足时模块级自动跳过），覆盖：单 Agent ReAct
+205 个 pytest（其中 14 个在环境不满足时模块级自动跳过：9 个 PG 集成 + 5 个 Docker 沙箱集成），覆盖：单 Agent ReAct
 闭环（FakeLLM 确定性）、工具/workspace 守卫、SQLite 持久化与 resume、supervisor 多 agent 编排
 （委派链/父子隔离/只读边界）、Human Approval interrupt 挂起恢复、Error Recovery（子图异常兜底）、
 Condense（消息数 + token 预算双守卫、最新 tool_call↔ToolMessage 配对完整、事件可观测）、
@@ -205,7 +256,17 @@ Docker Sandbox（CommandRunner 注入链路 / Docker CLI 参数与错误回流 /
 会话清理 / 启动清扫按 label 删孤儿且不误删无 label 容器）、PostgreSQL 持久化（事件打戳与
 `copy_context()` 语义 / Jsonb 与 SQL NULL / **连接必须 autocommit** / `record()` 永不抛异常与
 降级 / 回放判重 / sqlite 默认分支行为不变）、**服务层**（`tests/test_api.py`：状态机与 409 两态、
-`{"approved": true}` → 精确 `"yes"`、WS 冒烟与重连、shutdown 停容器、per-session emitter 隔离）。
+`{"approved": true}` → 精确 `"yes"`、WS 冒烟与重连、shutdown 停容器、per-session emitter 隔离）、
+**UI 契约**（`tests/test_web_ui_contract.py`：字段名逐字对齐 `web/src/api/types.ts`、事件发射
+顺序（委派嵌套/挂起重跑/拒绝闭合）、错误体形状、`write_file` 带完整 content、构建产物托管）。
+
+前端单测是另一套（**不需要浏览器**，只测 `model/` + `api/` 的纯函数）：
+
+```powershell
+cd web
+npm test              # vitest：折叠 / 判重 / token 聚合 / 文件重建 / 忙闲判定 / WS 状态机 / 错误归一化
+npm run typecheck     # tsc -b
+```
 
 三组集成测试（真 Docker 容器 / 真 PostgreSQL / 真删容器做清扫）在 daemon 或库不可用时
 **模块级自动跳过**，不影响常规 `pytest`：
@@ -247,5 +308,6 @@ $env:TEST_DATABASE_URL = "postgresql://codepilot:codepilot@localhost:5432/codepi
 - **P6**（✅ 完成）PostgreSQL + Event Persistence（checkpoint 与事件落库 + `--events` 回放）
 - **P7**（✅ 完成）FastAPI + WebSocket 服务层（每会话独立 workspace + 容器、REST 动作 / WS 订阅、
   挂起审批点按钮、静态测试页、启动清扫孤儿容器）
-- **P8**（下一步）React 前端（替掉 `api/static/index.html`，后端不动）
+- **P8**（✅ 完成）React Web UI（`web/`：委派时间线折叠 / 产出文件面板 / 令牌面板 / 事件过滤 /
+  `?session=` 深链 / 深色默认主题；构建产物托管到 `api/static/`，**后端一行不改**）
 - P9 起：Git / Eval

@@ -1,0 +1,446 @@
+{
+  "_comment": "由 tests/test_web_ui_contract.py 从真实事件流生成 —— 不要手改。thread_id 与 timestamp 已归一化，其余字段逐字来自后端。",
+  "events": [
+    {
+      "kind": "event",
+      "seq": 0,
+      "event": {
+        "type": "AgentStarted",
+        "agent": "Supervisor",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "thread_id": "<thread>",
+        "step": null,
+        "node": null
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 1,
+      "event": {
+        "type": "AgentStep",
+        "agent": "Supervisor",
+        "message": "决定调用 2 个工具: delegate, delegate",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:01+00:00",
+        "thread_id": "<thread>",
+        "step": 1,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 2,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "tester",
+            "task": "写 a.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:02+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 3,
+      "event": {
+        "type": "AgentStarted",
+        "agent": "tester",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:03+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 4,
+      "event": {
+        "type": "AgentStep",
+        "agent": "tester",
+        "message": "决定调用 1 个工具: write_file",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:04+00:00",
+        "thread_id": "<thread>",
+        "step": 1,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 5,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "tester",
+        "message": "write_file",
+        "detail": {
+          "args": {
+            "path": "a.py",
+            "content": "# a.py\n"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:05+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 6,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "tester",
+        "message": "write_file(path='a.py', content='# a.py\\n')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:06+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 7,
+      "event": {
+        "type": "AgentStep",
+        "agent": "tester",
+        "message": "给出最终回答",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:07+00:00",
+        "thread_id": "<thread>",
+        "step": 4,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 8,
+      "event": {
+        "type": "AgentCompleted",
+        "agent": "tester",
+        "message": "a.py 写好了",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:08+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 9,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "Supervisor",
+        "message": "delegate(specialist='tester', task='写 a.py')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:09+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 10,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "coder",
+            "task": "写 b.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:10+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 11,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "tester",
+            "task": "写 a.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:11+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 12,
+      "event": {
+        "type": "AgentStarted",
+        "agent": "tester",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:12+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 13,
+      "event": {
+        "type": "AgentStep",
+        "agent": "tester",
+        "message": "决定调用 1 个工具: write_file",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:13+00:00",
+        "thread_id": "<thread>",
+        "step": 1,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 14,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "tester",
+        "message": "write_file",
+        "detail": {
+          "args": {
+            "path": "a.py",
+            "content": "# a.py\n"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:14+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 15,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "tester",
+        "message": "write_file(path='a.py', content='# a.py\\n')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:15+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 16,
+      "event": {
+        "type": "AgentStep",
+        "agent": "tester",
+        "message": "给出最终回答",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:16+00:00",
+        "thread_id": "<thread>",
+        "step": 4,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 17,
+      "event": {
+        "type": "AgentCompleted",
+        "agent": "tester",
+        "message": "a.py 写好了",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:17+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 18,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "Supervisor",
+        "message": "delegate(specialist='tester', task='写 a.py')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:18+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 19,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "coder",
+            "task": "写 b.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:19+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 20,
+      "event": {
+        "type": "AgentStarted",
+        "agent": "coder",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:20+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 21,
+      "event": {
+        "type": "AgentStep",
+        "agent": "coder",
+        "message": "决定调用 1 个工具: write_file",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:21+00:00",
+        "thread_id": "<thread>",
+        "step": 1,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 22,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "coder",
+        "message": "write_file",
+        "detail": {
+          "args": {
+            "path": "b.py",
+            "content": "# b.py\n"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:22+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 23,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "coder",
+        "message": "write_file(path='b.py', content='# b.py\\n')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:23+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 24,
+      "event": {
+        "type": "AgentStep",
+        "agent": "coder",
+        "message": "给出最终回答",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:24+00:00",
+        "thread_id": "<thread>",
+        "step": 4,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 25,
+      "event": {
+        "type": "AgentCompleted",
+        "agent": "coder",
+        "message": "b.py 写好了",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:25+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 26,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "Supervisor",
+        "message": "delegate(specialist='coder', task='写 b.py')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:26+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 27,
+      "event": {
+        "type": "AgentStep",
+        "agent": "Supervisor",
+        "message": "给出最终回答",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:27+00:00",
+        "thread_id": "<thread>",
+        "step": 4,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 28,
+      "event": {
+        "type": "AgentCompleted",
+        "agent": "Supervisor",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:28+00:00",
+        "thread_id": "<thread>",
+        "step": null,
+        "node": null
+      }
+    }
+  ]
+}

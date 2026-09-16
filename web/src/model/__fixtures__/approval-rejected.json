@@ -1,0 +1,113 @@
+{
+  "_comment": "由 tests/test_web_ui_contract.py 从真实事件流生成 —— 不要手改。thread_id 与 timestamp 已归一化，其余字段逐字来自后端。",
+  "events": [
+    {
+      "kind": "event",
+      "seq": 0,
+      "event": {
+        "type": "AgentStarted",
+        "agent": "Supervisor",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "thread_id": "<thread>",
+        "step": null,
+        "node": null
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 1,
+      "event": {
+        "type": "AgentStep",
+        "agent": "Supervisor",
+        "message": "决定调用 1 个工具: delegate",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:01+00:00",
+        "thread_id": "<thread>",
+        "step": 1,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 2,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "coder",
+            "task": "写一个 quicksort 到 main.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:02+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 3,
+      "event": {
+        "type": "ToolCallStarted",
+        "agent": "Supervisor",
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "coder",
+            "task": "写一个 quicksort 到 main.py"
+          }
+        },
+        "timestamp": "2026-01-01T00:00:03+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 4,
+      "event": {
+        "type": "ToolCallCompleted",
+        "agent": "Supervisor",
+        "message": "delegate(specialist='coder', task='写一个 quicksort 到 main.py')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:04+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 5,
+      "event": {
+        "type": "AgentStep",
+        "agent": "Supervisor",
+        "message": "给出最终回答",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:05+00:00",
+        "thread_id": "<thread>",
+        "step": 4,
+        "node": "agent"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 6,
+      "event": {
+        "type": "AgentCompleted",
+        "agent": "Supervisor",
+        "message": "",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:06+00:00",
+        "thread_id": "<thread>",
+        "step": null,
+        "node": null
+      }
+    }
+  ]
+}

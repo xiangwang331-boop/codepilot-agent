@@ -1,0 +1,321 @@
+/* 三段式骨架：会话栏 | 事件时间线 | 检查器。 */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--inspector-w);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "top top top"
+    "rail main inspector";
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- 顶栏 */
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  min-height: 46px;
+}
+
+.topbar__brand {
+  font-weight: 650;
+  letter-spacing: 0.2px;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.topbar__brand small {
+  color: var(--fg-mute);
+  font-weight: 400;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+}
+.topbar__spacer {
+  flex: 1;
+}
+.topbar__tokens {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.iconbtn {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+.iconbtn:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+/* ---------------------------------------------------------------- 会话栏 */
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.rail__head {
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rail__new {
+  width: 100%;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-weight: 600;
+  padding: 7px 10px;
+}
+.rail__new:hover {
+  filter: brightness(1.08);
+}
+.rail__new:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rail__list {
+  overflow-y: auto;
+  flex: 1;
+  padding: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail__empty {
+  color: var(--fg-mute);
+  font-size: var(--fs-sm);
+  padding: var(--sp-3);
+  text-align: center;
+}
+
+.rail__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px var(--sp-2);
+  min-width: 0;
+}
+.rail__item:hover {
+  background: var(--surface-2);
+}
+.rail__item[aria-current="true"] {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.rail__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  flex: none;
+}
+.rail__dot[data-status="running"] {
+  background: var(--ok);
+}
+.rail__dot[data-status="awaiting_approval"] {
+  background: var(--warn);
+}
+.rail__dot[data-status="closed"] {
+  background: var(--fg-mute);
+}
+
+.rail__id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail__meta {
+  font-size: var(--fs-xs);
+  color: var(--fg-mute);
+  white-space: nowrap;
+}
+
+.rail__del {
+  opacity: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg-mute);
+  padding: 0 2px;
+  font-size: var(--fs-sm);
+}
+.rail__item:hover .rail__del {
+  opacity: 1;
+}
+.rail__del:hover {
+  color: var(--err);
+}
+
+/* ---------------------------------------------------------------- 主区 */
+
+.main {
+  grid-area: main;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.main__head {
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--line-soft);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  background: var(--surface);
+}
+
+.timeline {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  position: relative;
+}
+
+/* ---------------------------------------------------------------- 检查器 */
+
+.inspector {
+  grid-area: inspector;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- 输入区 */
+
+.composer {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.composer__input {
+  flex: 1;
+  resize: none;
+  background: var(--surface-2);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2) 10px;
+  font-family: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  max-height: 160px;
+  min-height: 36px;
+}
+.composer__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.composer__input:disabled {
+  opacity: 0.6;
+}
+
+.composer__send {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-weight: 600;
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+.composer__send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.composer__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.composer__hint {
+  font-size: var(--fs-xs);
+  color: var(--fg-mute);
+  padding: 0 var(--sp-4) var(--sp-2);
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------- 断点 */
+
+/* 窄屏：检查器掉到主区下面，会话栏收窄 */
+@media (max-width: 1180px) {
+  .app {
+    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-areas:
+      "top top"
+      "rail main"
+      "rail inspector";
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 40%);
+  }
+  .inspector {
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+}
+
+/* 手机：单列，会话栏变顶部横向抽屉 */
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "rail"
+      "main"
+      "inspector";
+    grid-template-rows: auto auto minmax(0, 1fr) minmax(0, 45%);
+  }
+  .rail {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    max-height: 132px;
+  }
+  .rail__list {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .rail__item {
+    width: auto;
+    min-width: 132px;
+  }
+}

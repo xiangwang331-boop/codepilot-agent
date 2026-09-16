@@ -1,0 +1,174 @@
+/*
+ * 设计令牌。深色是默认，浅色是同一组令牌的重定义。
+ *
+ * 换主题只切 <html data-theme="light">，组件 CSS 里**一个颜色字面量都不该出现** ——
+ * 全部走 var()。这条一旦破了，浅色主题就会长出深色的斑块。
+ */
+
+:root {
+  /* 层次：bg 最底 → surface 面板 → surface-2 卡片 */
+  --bg: #0d1014;
+  --surface: #14181f;
+  --surface-2: #1a1f28;
+  --surface-3: #202734;
+  --line: #232a35;
+  --line-soft: #1c222c;
+
+  --fg: #dfe4ec;
+  --fg-dim: #8892a4;
+  --fg-mute: #5b6577;
+
+  --accent: #5b8cff;
+  --accent-soft: rgba(91, 140, 255, 0.14);
+  --ok: #3fb950;
+  --ok-soft: rgba(63, 185, 80, 0.14);
+  --warn: #d29922;
+  --warn-soft: rgba(210, 153, 34, 0.16);
+  --err: #f85149;
+  --err-soft: rgba(248, 81, 73, 0.14);
+
+  /* 每个 agent 一个色相 —— 整个界面的身份系统。
+     「哪个 agent 在干什么」要能一眼扫出来，靠的就是这个。 */
+  --hue-supervisor: #a78bfa;
+  --hue-analyst: #38bdf8;
+  --hue-planner: #22d3ee;
+  --hue-coder: #5b8cff;
+  --hue-debugger: #f59e0b;
+  --hue-tester: #34d399;
+  --hue-reviewer: #f472b6;
+  --hue-unknown: #8892a4;
+  /* 由 [data-agent] 覆盖；没写 data-agent 的地方拿这个兜底 */
+  --agent-hue: var(--hue-unknown);
+
+  --font-ui: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "Courier New", ui-monospace, monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+
+  --radius: 8px;
+  --radius-sm: 5px;
+  --rail-w: 248px;
+  --inspector-w: 340px;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f2f4f7;
+  --surface-3: #e9ecf1;
+  --line: #dde1e8;
+  --line-soft: #e8ebf0;
+
+  --fg: #1b2029;
+  --fg-dim: #5d6675;
+  --fg-mute: #8a93a3;
+
+  --accent: #2f6bf0;
+  --accent-soft: rgba(47, 107, 240, 0.1);
+  --ok: #1a7f37;
+  --ok-soft: rgba(26, 127, 55, 0.1);
+  --warn: #9a6700;
+  --warn-soft: rgba(154, 103, 0, 0.12);
+  --err: #cf222e;
+  --err-soft: rgba(207, 34, 46, 0.1);
+
+  /* 浅色下把色相压深，否则在白色上没有对比度 */
+  --hue-supervisor: #7c3aed;
+  --hue-analyst: #0284c7;
+  --hue-planner: #0891b2;
+  --hue-coder: #2563eb;
+  --hue-debugger: #b45309;
+  --hue-tester: #059669;
+  --hue-reviewer: #db2777;
+  --hue-unknown: #64748b;
+
+  color-scheme: light;
+}
+
+/* agent 色相映射。兜底规则放最前，具体规则在后 —— 同为 (0,1,0) 特异度，后者胜出。
+   未注册的 agent（将来注册表加新角色）自动落到 --hue-unknown，不会渲染成透明。 */
+[data-agent] {
+  --agent-hue: var(--hue-unknown);
+}
+[data-agent="supervisor"] {
+  --agent-hue: var(--hue-supervisor);
+}
+[data-agent="analyst"] {
+  --agent-hue: var(--hue-analyst);
+}
+[data-agent="planner"] {
+  --agent-hue: var(--hue-planner);
+}
+[data-agent="coder"] {
+  --agent-hue: var(--hue-coder);
+}
+[data-agent="debugger"] {
+  --agent-hue: var(--hue-debugger);
+}
+[data-agent="tester"] {
+  --agent-hue: var(--hue-tester);
+}
+[data-agent="reviewer"] {
+  --agent-hue: var(--hue-reviewer);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-mute);
+}
