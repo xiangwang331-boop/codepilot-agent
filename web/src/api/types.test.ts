@@ -17,6 +17,7 @@ import {
   type CondenseDetail,
   type EventType,
   type SessionInfo,
+  type SessionList,
   type SessionStatus,
 } from "./types";
 
@@ -290,9 +291,23 @@ describe("SessionInfo 的字段名（与后端 `test_session_info_fields_match_t
     expect(Object.keys(SAMPLE).sort()).toEqual([...SESSION_FIELDS].sort());
   });
 
-  it("四态字面量与后端 `SessionStatus.value` 对齐", () => {
-    const all: SessionStatus[] = ["idle", "running", "awaiting_approval", "closed"];
-    expect(all).toHaveLength(4);
+  it("五态字面量与后端 `SessionStatus.value` 对齐", () => {
+    // 第五态 `interrupted` 是 P9 加的（`runtime/session.py`），后端侧由
+    // `test_web_ui_contract.py` 对着枚举钉；这里钉的是 TS 这一半别漏。
+    const all: SessionStatus[] = [
+      "idle",
+      "running",
+      "awaiting_approval",
+      "interrupted",
+      "closed",
+    ];
+    expect(all).toHaveLength(5);
     for (const s of all) SAMPLE.status = s;
+  });
+
+  it("SessionList 带 history_available（P9 决定④的能力位）", () => {
+    // 标注成 `SessionList` 才是真的钉：后端去掉这个键 → 这里编译不过。
+    const list: SessionList = { sessions: [SAMPLE], history_available: true };
+    expect(Object.keys(list).sort()).toEqual(["history_available", "sessions"]);
   });
 });

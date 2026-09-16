@@ -53,7 +53,13 @@ export default function App(): React.JSX.Element {
   const [theme, setTheme] = useState<"dark" | "light">(readTheme);
 
   const { envelopes, live, state } = useSessionStream(selected);
-  const { sessions, error: listError, loaded, refresh } = useSessions(live);
+  const {
+    sessions,
+    error: listError,
+    loaded,
+    historyAvailable,
+    refresh,
+  } = useSessions(live);
 
   // 主题落到 <html data-theme>，CSS 只认这个属性（见 tokens.css）
   useEffect(() => {
@@ -175,7 +181,9 @@ export default function App(): React.JSX.Element {
         />
       );
     }
-    return <EventTimeline blocks={blocks} filters={filters} />;
+    return (
+      <EventTimeline blocks={blocks} filters={filters} historyAvailable={historyAvailable} />
+    );
   };
 
   return (
@@ -209,6 +217,7 @@ export default function App(): React.JSX.Element {
         onCreate={onCreate}
         onDelete={onDelete}
         creating={creating}
+        historyAvailable={historyAvailable}
       />
 
       <main className="main">

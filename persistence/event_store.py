@@ -20,6 +20,7 @@ import json
 import sys
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable
 
@@ -68,6 +69,16 @@ _SELECT_SQL = (
     "SELECT thread_id, step, node, type, agent, message, detail, ts"
     " FROM events WHERE thread_id = %s ORDER BY id"
 )
+
+# P9：会话目录。`GROUP BY thread_id` 吃现成的 (thread_id, id) 索引；
+# `ORDER BY MAX(id) DESC` 就是「按最后活动倒序」——id 是全局单调的 BIGSERIAL，
+# 比 MAX(ts) 更可靠（ts 由应用侧生成，时钟回拨会让排序骗人）。
+_THREADS_SQL = (
+    "SELECT thread_id, COUNT(*) AS event_count, MAX(id) AS last_id, MAX(ts) AS last_ts"
+    " FROM events GROUP BY thread_id ORDER BY MAX(id) DESC"
+)
+
+_DELETE_THREAD_SQL = "DELETE FROM events WHERE thread_id = %s"
 
 # 连续失败到几次才彻底停写：PG 重启这类瞬时故障不该被当成永久故障一次性判死。
 _FAILURE_THRESHOLD = 3
@@ -126,6 +137,35 @@ def row_to_event(row: dict) -> Event | None:
         thread_id=row.get("thread_id") or "",
         step=row.get("step"),
         node=row.get("node"),
+    )
+
+
+@dataclass(frozen=True)
+class ThreadSummary:
+    """事件表里的一个会话（P9 会话目录的一行）。
+
+    `last_id` 只用来**排序**（谁最后活动），不是 seq —— seq 是会话内的内存下标，
+    与这个全局 BIGSERIAL 完全是两回事（见 runtime/session.py 的 seq 说明）。
+    """
+
+    thread_id: str
+    event_count: int
+    last_id: int
+    last_ts: str
+
+
+def row_to_thread_summary(row: dict) -> ThreadSummary:
+    """`_THREADS_SQL` 的一行 → `ThreadSummary`（纯函数，单测直接断言）。
+
+    宽容读取（`row.get(...) or 默认值`）：这一行是**目录**，字段缺一个也不该让整个
+    会话列表炸掉——排序退化到 0 顶多让它在末尾，比 500 好。
+    """
+    ts = row.get("last_ts")
+    return ThreadSummary(
+        thread_id=row.get("thread_id") or "",
+        event_count=int(row.get("event_count") or 0),
+        last_id=int(row.get("last_id") or 0),
+        last_ts=ts.isoformat(timespec="seconds") if isinstance(ts, datetime) else str(ts or ""),
     )
 
 
@@ -315,6 +355,35 @@ class PostgresEventStore:
             )
         return events
 
+    # ---- 读（会话目录，P9）----
+
+    def list_threads(self, *, limit: int | None = None) -> list[ThreadSummary]:
+        """列出库里有事件的会话，**按最后活动倒序**（P9 的服务端会话目录）。
+
+        这是「重启后还有哪些会话」的第一数据源：事件表既有 thread_id 也有
+        `(thread_id, id)` 索引，一次 GROUP BY 就拿到「谁 + 多少条 + 最后活动」。
+
+        ⚠️ 一个会话若从未跑过（`POST /sessions` 之后没发过指令），它**既没有事件
+        也没有 checkpoint**，从这里列不出来——这是已知边界，不是 bug。
+        """
+        if not self._ready:
+            self.open()
+        sql = _THREADS_SQL + (" LIMIT %s" if limit is not None else "")
+        params = (limit,) if limit is not None else None
+        return [row_to_thread_summary(row) for row in self._query(sql, params)]
+
+    def delete_thread(self, thread_id: str) -> int:
+        """删掉一个会话的全部事件，返回删了多少行（P9 的 DELETE 语义）。
+
+        **必须删**：目录一旦从库里读，只 pop 内存就会让「删掉的会话重启后复活」。
+        """
+        if not self._ready:
+            self.open()
+        with self._connection() as conn, conn.cursor() as cur:
+            cur.execute(_DELETE_THREAD_SQL, (thread_id,))
+            # 宽容读取：单测的假 cursor 不一定带 rowcount，而删没删干净不该靠它判定
+            return int(getattr(cur, "rowcount", 0) or 0)
+
 
 def _describe_failure(e: Exception, database_url: str) -> str:
     safe = _safe_url(database_url)
@@ -341,6 +410,8 @@ __all__ = [
     "EVENTS_INDEX_DDL",
     "EventStoreError",
     "PostgresEventStore",
+    "ThreadSummary",
     "event_row",
     "row_to_event",
+    "row_to_thread_summary",
 ]

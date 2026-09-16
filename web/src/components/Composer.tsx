@@ -7,7 +7,8 @@ import type { SessionStatus } from "../api/types";
  * 需求输入框。Enter 发送 / Shift+Enter 换行。
  *
  * 忙碌时禁用而不是隐藏：用户得看得见「现在不能发」，否则会以为界面卡了。
- * 提示语说明**为什么**不能发 —— 尤其是挂起态，它其实在等人去点批准。
+ * 提示语说明**为什么**不能发 —— 尤其是挂起态，它其实在等人去点批准；
+ * 以及 P9 的 `interrupted`，它**不是**「等一下就能发」，而是根本发不了。
  */
 export function Composer({
   status,
@@ -36,6 +37,11 @@ export function Composer({
         return "任务执行中，等它跑完或停下来再下发新指令。";
       case "awaiting_approval":
         return "有委派在等批准 —— 先在右侧点「批准执行」或「拒绝」，会话才能继续。";
+      case "interrupted":
+        // P9：这一态**接不下去**。别写成「等它跑完」——那个 worker 线程随上个进程
+        // 一起没了，永远不会跑完；也不能写「已关闭」——库里那份 checkpoint 是好端端的，
+        // 用户看到「只能看历史」才知道该新建会话重跑，而不是以为数据丢了。
+        return "这个会话在服务重启时中断了，只能查看历史，不能再下发指令（新建一个会话重跑）。";
       case "closed":
         return "会话已关闭，新建一个才能继续。";
       default:

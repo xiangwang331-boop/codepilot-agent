@@ -12,6 +12,7 @@ import {
   canApprove,
   canSend,
   isBusy,
+  isInterrupted,
   isTerminal,
   pickInitialSession,
   pollDelayMs,
@@ -20,13 +21,19 @@ import {
   withLiveStatus,
 } from "./session";
 
-const ALL: SessionStatus[] = ["idle", "running", "awaiting_approval", "closed"];
+const ALL: SessionStatus[] = [
+  "idle",
+  "running",
+  "awaiting_approval",
+  "interrupted",
+  "closed",
+];
 
 function info(thread_id: string, status: SessionStatus): SessionInfo {
   return { thread_id, status, approval: [], result: null, error: null, event_count: 0 };
 }
 
-describe("四态判定", () => {
+describe("五态判定", () => {
   it("isBusy 只认 running 与 awaiting_approval", () => {
     expect(ALL.filter(isBusy)).toEqual(["running", "awaiting_approval"]);
   });
@@ -43,26 +50,39 @@ describe("四态判定", () => {
     expect(ALL.filter(isTerminal)).toEqual(["closed"]);
   });
 
-  it("穷举四态的真值表（`awaiting_approval` 同时是「忙」与「可批准」）", () => {
+  it("isInterrupted 只认 interrupted", () => {
+    expect(ALL.filter(isInterrupted)).toEqual(["interrupted"]);
+  });
+
+  it("穷举五态的真值表（`awaiting_approval` 同时是「忙」与「可批准」）", () => {
     // 用对象而不是数组：真值表是**按状态查**的，不该依赖 ALL 的排列顺序
     const table = Object.fromEntries(
       ALL.map((s) => [
         s,
-        { busy: isBusy(s), send: canSend(s), approve: canApprove(s), terminal: isTerminal(s) },
+        {
+          busy: isBusy(s),
+          send: canSend(s),
+          approve: canApprove(s),
+          terminal: isTerminal(s),
+          cut: isInterrupted(s),
+        },
       ]),
     );
     expect(table).toEqual({
-      idle: { busy: false, send: true, approve: false, terminal: false },
-      running: { busy: true, send: false, approve: false, terminal: false },
+      idle: { busy: false, send: true, approve: false, terminal: false, cut: false },
+      running: { busy: true, send: false, approve: false, terminal: false, cut: false },
       // ⚠️ 挂起态**既是忙也是可批准** —— 这两个谓词**不互斥**，别按互斥去写。
       // 写成互斥就会在等批准时把「发送」按钮放出来，点下去必然 409。
-      awaiting_approval: { busy: true, send: false, approve: true, terminal: false },
-      closed: { busy: false, send: false, approve: false, terminal: true },
+      awaiting_approval: { busy: true, send: false, approve: true, terminal: false, cut: false },
+      // ⚠️ P9 第五态的关键一行：**既不忙也不能发**（后端 `begin()` 只接受 IDLE）。
+      // 把它错算成 busy 会让侧栏永远 2 秒轮询一个状态再也不会变的会话（`pollDelayMs`）。
+      interrupted: { busy: false, send: false, approve: false, terminal: false, cut: true },
+      closed: { busy: false, send: false, approve: false, terminal: true, cut: false },
     });
   });
 
-  it("statusLabel 四态都有中文，未注册值原样返回（不显示 undefined）", () => {
-    expect(ALL.map(statusLabel)).toEqual(["空闲", "运行中", "待批准", "已关闭"]);
+  it("statusLabel 五态都有中文，未注册值原样返回（不显示 undefined）", () => {
+    expect(ALL.map(statusLabel)).toEqual(["空闲", "运行中", "待批准", "已中断", "已关闭"]);
     expect(statusLabel("weird" as SessionStatus)).toBe("weird");
   });
 });
@@ -70,6 +90,10 @@ describe("四态判定", () => {
 describe("pollDelayMs", () => {
   it("全闲 → 慢轮询（10s）", () => {
     expect(pollDelayMs([info("a", "idle"), info("b", "closed")])).toBe(10000);
+  });
+
+  it("`interrupted` 不算忙 → 慢轮询（状态再也不会变，快轮是纯浪费）", () => {
+    expect(pollDelayMs([info("a", "interrupted"), info("b", "idle")])).toBe(10000);
   });
 
   it("有一个忙 → 快轮询（2s）", () => {
@@ -90,8 +114,9 @@ describe("pickInitialSession", () => {
   });
 
   it("URL 有 ?session= 但不存在 → **null**，不偷偷跳去别的会话", () => {
-    // 服务重启后 registry 就空了，深链失效是常态。悄悄选第一个会让用户以为
-    // 「我的会话还在，只是内容变空了」，那比明说「不存在」糟得多。
+    // 深链失效还有真实场景：会话被 DELETE 了、sqlite 换了 checkpoint 库、
+    // 恢复失败降级。悄悄选第一个会让用户以为「我的会话还在，只是内容变空了」，
+    // 那比明说「不存在」糟得多。
     expect(pickInitialSession(sessions, "nope")).toBeNull();
   });
 

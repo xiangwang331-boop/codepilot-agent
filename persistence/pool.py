@@ -20,11 +20,13 @@ CLI 的用法**完全不变**（`build_checkpointer(settings)` 内部自己建�
 """
 from __future__ import annotations
 
-import sys
 from typing import Any
 
+from config.logging_setup import get_logger
 from config.settings import Settings
 from persistence.checkpointer import PersistenceError, PostgresSaver, _safe
+
+logger = get_logger(__name__)
 
 try:
     import psycopg
@@ -97,7 +99,7 @@ def close_pool(pool: Any | None) -> None:
     try:
         pool.close()
     except Exception as e:  # noqa: BLE001  关闭失败不致命（进程即将退出）
-        print(f"警告: 关闭连接池失败: {e}", file=sys.stderr)
+        logger.warning("警告: 关闭连接池失败: %s", e, exc_info=True)
 
 
 def _ensure_checkpoint_schema(pool: Any) -> None:

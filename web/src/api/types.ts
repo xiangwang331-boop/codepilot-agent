@@ -14,8 +14,16 @@
  * 重跑判重只看 `step !== null` 的事件（见 `model/replay.ts`）。
  */
 
-/** `runtime/session.py` 的 SessionStatus.value */
-export type SessionStatus = "idle" | "running" | "awaiting_approval" | "closed";
+/**
+ * `runtime/session.py` 的 SessionStatus.value.
+ *
+ * `interrupted` 是 P9 新增的第五态：**服务重启时正在跑**的会话，从 checkpoint 恢复后
+ * `snap.next` 还非空（或 state 写着 `running`），但那个 worker 线程已经不存在了 ——
+ * 既不能续跑（`begin()` 只接受 `idle`）也不该假装它空闲。恢复成 `running` 更糟：
+ * 那会同时被 `begin()` 与 `reapable()` 拒绝，变成一个只能删的死会话。所以单独立一态：
+ * **只读历史**（`runtime/catalog.py:derive_status`）。
+ */
+export type SessionStatus = "idle" | "running" | "awaiting_approval" | "interrupted" | "closed";
 
 /** `events/events.py` 的 EventType 九个值 —— 顺序与枚举一致。 */
 export type EventType =
@@ -62,6 +70,19 @@ export interface SessionInfo {
   result: Record<string, unknown> | null;
   error: string | null;
   event_count: number;
+}
+
+/**
+ * `api/schemas.py` 的 SessionList —— `GET /sessions` 的响应体。
+ *
+ * `history_available` 是**列表级**的能力位，不是每个会话的属性：它说的是「这个进程
+ * 读不读得到历史事件流」。`PERSISTENCE_BACKEND=postgres` 时 true；sqlite 后端为 false
+ * （事件从不落库，关键坑 #46），此时会话照样列得出来（从 checkpoint 反推）但点进去
+ * 时间线是空的 —— 界面**必须**明说这件事，不能假装一样（P9 决定 ④）。
+ */
+export interface SessionList {
+  sessions: SessionInfo[];
+  history_available: boolean;
 }
 
 // ---------------------------------------------------------------- WS 信封

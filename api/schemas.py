@@ -33,10 +33,18 @@ class ApprovalRequest(BaseModel):
 
 
 class SessionInfo(BaseModel):
-    """会话状态快照。"""
+    """会话状态快照。
+
+    ⚠️ **字段集是前端契约**：`tests/test_web_ui_contract.py` 对着它做**精确相等**断言
+    （`set(body) == SESSION_FIELDS`，REST 单会话与 WS status 信封两处）。加字段 =
+    同时改那个常量与 `web/src/api/types.ts`，别只改这里。
+    """
 
     thread_id: str
-    status: str = Field(description="idle | running | awaiting_approval | closed")
+    status: str = Field(
+        description="idle | running | awaiting_approval | interrupted | closed"
+        "（interrupted 是 P9：服务重启时正在跑、恢复后只能看历史，见 runtime/catalog.py）"
+    )
     approval: list[dict[str, Any]] = Field(
         default_factory=list, description="待批准的问题（status=awaiting_approval 时非空）"
     )
@@ -46,7 +54,18 @@ class SessionInfo(BaseModel):
 
 
 class SessionList(BaseModel):
+    """会话目录（P9 起含**重启后从持久化恢复**的历史会话）。
+
+    `history_available` 是**列表级**能力位，不是每个会话的属性：它说的是
+    「这个进程读不读得到历史事件流」（postgres=true / sqlite=false），
+    前端据此出横幅说明「点进去为什么时间线是空的」（决定④）。
+    """
+
     sessions: list[SessionInfo]
+    history_available: bool = Field(
+        default=True,
+        description="事件流能否跨重启回放（PERSISTENCE_BACKEND=postgres 时为 true）",
+    )
 
 
 class EventEnvelope(BaseModel):

@@ -45,6 +45,13 @@
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
   background: var(--warn-soft);
 }
+/* P9 第五态：不是「正在出错」，而是「上次没能正常收尾」——比空闲更该被看见，所以给错误色。
+   注意它**没有转圈**（见 `Badges.tsx` 的注释）：这一态等不来。 */
+.pill[data-status="interrupted"] {
+  color: var(--err);
+  border-color: color-mix(in srgb, var(--err) 40%, transparent);
+  background: var(--err-soft);
+}
 .pill[data-status="closed"] {
   color: var(--fg-mute);
 }

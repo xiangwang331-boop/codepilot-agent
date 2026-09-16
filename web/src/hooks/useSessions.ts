@@ -16,6 +16,14 @@ export interface SessionsState {
   error: string | null;
   /** 首次拉取是否已完成。空列表和「还没拉到」是两回事，UI 得能区分。 */
   loaded: boolean;
+  /**
+   * 事件流能不能跨重启回放（`SessionList.history_available`，P9 决定 ④）。
+   *
+   * 初值 `true` 是**刻意的乐观默认**：它只在 postgres 下为 false，而真为 false 时
+   * 第一次拉取（毫秒级）就会把它翻过来。默认 false 会让 postgres 用户先看到一条
+   * 吓人的横幅再消失。
+   */
+  historyAvailable: boolean;
   /** 立刻重取（新建/删除会话后调，不必等下一个轮询周期）。 */
   refresh: () => void;
 }
@@ -28,6 +36,7 @@ export function useSessions(live: SessionInfo | null): SessionsState {
   const [raw, setRaw] = useState<SessionInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [historyAvailable, setHistoryAvailable] = useState(true);
   const [nonce, setNonce] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -52,7 +61,11 @@ export function useSessions(live: SessionInfo | null): SessionsState {
       try {
         const res = await listSessions();
         next = res.sessions;
-        if (!cancelled) setError(null);
+        if (!cancelled) {
+          setError(null);
+          // 能力位跟着每次拉取刷新：后端换了 `PERSISTENCE_BACKEND` 重启后无须刷新页面。
+          setHistoryAvailable(res.history_available);
+        }
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof ApiError ? e.message : String(e));
@@ -86,5 +99,5 @@ export function useSessions(live: SessionInfo | null): SessionsState {
     };
   }, [nonce]);
 
-  return { sessions: withLiveStatus(raw, live), error, loaded, refresh };
+  return { sessions: withLiveStatus(raw, live), error, loaded, historyAvailable, refresh };
 }

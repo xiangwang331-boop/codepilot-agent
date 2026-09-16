@@ -3,7 +3,13 @@ import { statusLabel } from "../model/session";
 import type { StreamState } from "../api/stream";
 import type { SessionStatus } from "../api/types";
 
-/** 状态药丸。`running` 带转圈，`awaiting_approval` 用警示色。 */
+/**
+ * 状态药丸。`running` 带转圈，`awaiting_approval` 用警示色。
+ *
+ * `interrupted` 用**错误色**（`--err`）：它不是「正在出错」，而是「上次没能正常收尾」
+ * —— 这是时间线上永远补不回来的那一段，值得比空闲更显眼。**不给它转圈**：转圈意味着
+ * 「等一下就好」，而这一态是等不来的。
+ */
 export function StatusPill({ status }: { status: SessionStatus }): React.JSX.Element {
   return (
     <span className="pill" data-status={status}>
@@ -25,8 +31,12 @@ export function AgentBadge({ agent }: { agent: string }): React.JSX.Element {
 /**
  * 连接状态。
  *
- * 4404 是**终局**（服务重启后内存里的会话目录就清空了，重连一万次也没用），
- * 所以这里明说「会话不存在」并给出重建入口，而不是无限转圈。
+ * 4404 是**终局**（这个 thread_id 在服务端真的没有了：从没被持久化过 / 已被 DELETE /
+ * 恢复失败），重连一万次也没用，所以这里明说「会话不存在」并给出重建入口，
+ * 而不是无限转圈。
+ *
+ * ⚠️ **P9 起 4404 不再等于「重启把会话清空了」**：持久化里的会话现在会被恢复出来。
+ * 所以主区的文案不能再归因到「服务重启」（见 `EmptyState`）。
  */
 export function ConnBadge({ state }: { state: StreamState }): React.JSX.Element {
   const text = (() => {

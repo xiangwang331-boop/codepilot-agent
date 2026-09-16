@@ -143,8 +143,27 @@
 .rail__dot[data-status="awaiting_approval"] {
   background: var(--warn);
 }
+/* P9 第五态：与 `.pill[data-status="interrupted"]` 同一套配色（见 timeline.css）。 */
+.rail__dot[data-status="interrupted"] {
+  background: var(--err);
+}
 .rail__dot[data-status="closed"] {
   background: var(--fg-mute);
+}
+
+/* P9 决定④的横幅：sqlite 下「会话还在但事件流没了」的明确提示，只在能力位为 false 时渲染。 */
+.rail__notice {
+  margin: 0 8px 8px;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-soft);
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.rail__notice strong {
+  color: var(--warn);
 }
 
 .rail__id {

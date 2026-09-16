@@ -10,12 +10,13 @@
  * | 409（重名） | 字符串 | `routes.py:91` 的 `str(SessionExistsError)` |
  * | 409（忙） | **对象** `{status, message}` | `routes.py:65-71` |
  * | 422 | **数组** `[{loc,msg,type}, …]` | FastAPI 校验 |
+ * | 500 | 字符串（含被移除但删库失败的原因） | `routes.py:135-138`（P9） |
  * | 503 | 字符串 | `routes.py:51` |
  *
  * 界面上任何一处直接用 `detail` 都会在某个状态码下渲染成 `[object Object]`。
  * 所以**只有这里**碰错误体，其余地方一律拿 `ApiError.message`。
  */
-import type { SessionInfo } from "./types";
+import type { SessionInfo, SessionList } from "./types";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -115,8 +116,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 // ---------------------------------------------------------------- 端点
 
-export function listSessions(): Promise<{ sessions: SessionInfo[] }> {
-  return request<{ sessions: SessionInfo[] }>("GET", "/sessions");
+export function listSessions(): Promise<SessionList> {
+  return request<SessionList>("GET", "/sessions");
 }
 
 export function getSession(threadId: string): Promise<SessionInfo> {

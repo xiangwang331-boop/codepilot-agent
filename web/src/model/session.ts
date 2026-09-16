@@ -1,10 +1,15 @@
 /**
  * 会话状态判定 / 轮询节奏 / 选中逻辑。
  *
- * `SessionStatus` 四态的真源是 `runtime/session.py` 的状态机。**忙闲判定必须只看
+ * `SessionStatus` 五态的真源是 `runtime/session.py` 的状态机。**忙闲判定必须只看
  * 这两个状态字段**，绝不能看「worker 线程还活着吗」—— LangGraph 会**静默吞掉**
  * 挂起中的 interrupt（CLAUDE.md 关键坑 #31）：挂起时再 invoke 一次不报错、`next`
  * 清空、`interrupts` 归零、委派被丢弃且全程无异常。后端为此专门有回归测试。
+ *
+ * P9 加的第五态 `interrupted` **刻意不属于 `isBusy`**：它一点都不忙（worker 线程早
+ * 就随上个进程没了），只是**停下了且接不下去**。把它算进 `isBusy` 会让侧栏永远 2 秒
+ * 打一次后端（`pollDelayMs`）而状态永远不会变 —— 那是纯浪费。它是否可发指令由
+ * `canSend` 管，答案是「不行」，理由与闭态相同而不是与忙态相同。
  */
 import type { SessionInfo, SessionStatus } from "../api/types";
 
@@ -13,7 +18,12 @@ export function isBusy(status: SessionStatus): boolean {
   return status === "running" || status === "awaiting_approval";
 }
 
-/** 能不能下发新指令。 */
+/**
+ * 能不能下发新指令。**只有 `idle`**：
+ * - `running`/`awaiting_approval` → 后端 409 忙；
+ * - `interrupted`/`closed` → 后端同样不接（`begin()` 只接受 IDLE），
+ *   但**文案不同** —— 一个说「服务重启前中断了，只能看历史」，一个说「已关闭、新建一个」。
+ */
 export function canSend(status: SessionStatus): boolean {
   return status === "idle";
 }
@@ -28,10 +38,22 @@ export function isTerminal(status: SessionStatus): boolean {
   return status === "closed";
 }
 
+/**
+ * 重启前被中断（只读历史）。
+ *
+ * 与 `closed` 的区别是**它本可以继续**：库里那份 checkpoint 是好端端的，只是当时
+ * 正在跑的 worker 线程随进程一起没了，而「跑到一半」的状态接不回来（P9 决定 ②）。
+ */
+export function isInterrupted(status: SessionStatus): boolean {
+  return status === "interrupted";
+}
+
+/** ⚠️ `Record<SessionStatus, string>` 是**免费的类型闸门**：漏一个第五态 `tsc -b` 直接报错。 */
 const STATUS_LABELS: Record<SessionStatus, string> = {
   idle: "空闲",
   running: "运行中",
   awaiting_approval: "待批准",
+  interrupted: "已中断",
   closed: "已关闭",
 };
 

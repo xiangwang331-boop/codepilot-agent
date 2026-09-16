@@ -32,15 +32,24 @@ loop —— `TestClient` 把 app 跑在自己的 portal 线程、uvicorn 跑在�
 认不出就不吞 → 异常穿出 starlette 的 `_run` → future 被标 cancelled →
 `WebSocketTestSession.__exit__` 抛 `concurrent.futures.CancelledError`（真机踩过）。
 所以收尾只 `cancel()` 不 await，异常由 `_drain` 取回。
+
+**5. `registry.get()` 必须丢进线程池（P9）。** 它现在会在未命中内存时**懒物化**一个
+历史会话：建图（≈60ms）+ 从库里读整段事件流，全程同步阻塞、还握着注册表的锁。
+本 handler 是 `async def`，直接在 loop 线程里调它 = 一次「点开历史会话」卡住整个服务
+（所有会话的 WS 推送、全部 REST 请求都排在后面）。用 `run_in_threadpool` 让它在
+worker 线程里跑 —— 与 REST 侧天然一致（`def` 端点本来就被 FastAPI 丢进线程池）。
 """
 from __future__ import annotations
 
 import asyncio
-import sys
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.concurrency import run_in_threadpool
 
+from config.logging_setup import get_logger
 from runtime.session import Session
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -57,9 +66,12 @@ async def session_events(websocket: WebSocket, thread_id: str, since: int = 0) -
         await _fail(websocket, "服务尚未就绪", WS_CLOSE_NOT_READY)
         return
 
-    session: Session | None = registry.get(thread_id)
+    # P9：未命中内存会懒物化（建图 + 读库），绝不能占着 loop 线程做（见 docstring #5）
+    session: Session | None = await run_in_threadpool(registry.get, thread_id)
     if session is None:
-        # 会话在服务重启后就没了（内存目录不持久化）——前端据此提示「重开会话」。
+        # P9 起这条**不再是**「重启前建的会话都这样」：持久化里的会话会被恢复出来，
+        # 所以 4404 现在只意味着「这个 id 从来没被持久化过 / 已被 DELETE / 恢复失败」。
+        # 前端仍可据此提示「重开会话」，但不能再说「历史不可能还在」。
         await _fail(websocket, f"会话 {thread_id} 不存在", WS_CLOSE_NO_SESSION)
         return
 
@@ -88,9 +100,12 @@ async def session_events(websocket: WebSocket, thread_id: str, since: int = 0) -
         # **必须留声**：信封里出现非 JSON 原生类型时，抛点在 starlette 的 send_json 里，
         # 悄无声息地吞掉就等于客户端一个字节都收不到、服务端也没有任何痕迹
         #（真机踩过：回填跑过任务的会话 → 状态信封里带图 state → 静默死连接）。
-        print(
-            f"警告: WS 推送中断（会话 {thread_id}）: {type(e).__name__}: {e}",
-            file=sys.stderr,
+        logger.warning(
+            "警告: WS 推送中断（会话 %s）: %s: %s",
+            thread_id,
+            type(e).__name__,
+            e,
+            exc_info=True,
         )
     finally:
         session.unsubscribe(push)

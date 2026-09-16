@@ -12,27 +12,38 @@
 ## lifespan 里建什么、按什么顺序收
 
 ```
-ExitStack:  pool ──► event_store ──► checkpointer(sqlite) ──► registry
-                                                                 │
-                  registry.__exit__ = stop_reaper + close_all ◄──┘  （先收会话）
-                  …然后 checkpointer / event_store / pool 依次关闭
+ExitStack:  pool ──► event_store ──► checkpointer(sqlite) ──► catalog ──► registry
+                                                                            │
+                  registry.__exit__ = stop_reaper + close_all  ◄────────────┘
+                  …然后 catalog ──► checkpointer ──► event_store ──► pool 依次关闭
 ```
 
-顺序是硬要求：会话握着容器与（postgres 下）从池里取的连接，必须**先于**池被关掉。
+顺序是硬要求：会话握着容器与（postgres 下）从池里取的连接，必须**先于**池被关掉；
+catalog 的探针图也读 checkpointer/池，所以要**晚于**它们进栈、**早于** registry 出栈。
 ExitStack 的 LIFO 天然满足——所以进栈顺序就是上面那样，不能改。
 
 **sqlite 后端**：全进程**共用一个** `SqliteSaver` 实例（`SqliteSaver` 有
 `check_same_thread=False` + 自带锁 + WAL，一个实例多线程共享是安全的；**多个**实例指向
 同一文件才危险——各自一把锁，`database is locked` 会从 `put` 里抛出来炸掉 graph run）。
-事件只在进程内存（`GET /events` 与 WS 回填读的就是它），重启即丢，启动时明确告警。
+**共享实例必须同时交给 registry 与 catalog**（`checkpointer=` 参数）——它们各建一个
+指向同一文件的实例就正是上面那个危险情形。事件只在进程内存（`GET /events` 与 WS 回填
+读的就是它），重启即丢，启动时明确告警。
 
 **postgres 后端**：全进程**共用一个连接池** + **每会话一个 `PostgresSaver(pool)`**。
 每会话实例成本为零还消掉跨会话锁竞争；`setup()` 建表在 `build_pool()` 里跑过一次
 （幂等），会话不再跑 DDL。
+
+## P9：catalog —— 读路径的接驳层
+
+`SessionCatalog`（`runtime/catalog.py`）在启动时枚举持久化里的会话、从 checkpoint 重推
+各自状态，交给 `registry.discover()` 登记成**未物化记录**：`GET /sessions` 立刻有内容，
+点开某个历史会话时 registry 才把它物化成真 `Session`。没有这一步，重启后
+「库里有、列表里没有」——那正是 P9 要修的那个问题。
+
+它**不参与写路径**：会话照旧只由 `POST /sessions` 建。
 """
 from __future__ import annotations
 
-import sys
 import time
 from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
@@ -42,15 +53,19 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from api import routes, ws
+from config.logging_setup import get_logger, setup_logging, teardown_logging
 from config.settings import Settings
 from persistence.checkpointer import PersistenceError, build_checkpointer
 from persistence.event_store import EventStoreError, PostgresEventStore
 from persistence.pool import build_pool, close_pool
+from runtime.catalog import SessionCatalog
 from runtime.registry import SessionRegistry
 from tools.command_runner import sweep_orphan_containers
 
 PROJECT_NAME = "CodePilot"
 VERSION = "0.7.0"
+
+logger = get_logger(__name__)
 
 # 静态测试页（P7-6）。挂载在最后：Starlette 按注册顺序匹配，先注册的 /sessions 优先，
 # 剩下的才轮到 "/"。目录不存在就不挂（免得开发中间态起不来服务）。
@@ -75,37 +90,54 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if warm_llm:
-            _warm_llm()
+        # ⚠️ **必须是第一句**：下面 `_warm_llm`（要 8.7 秒）与 `_sweep_orphans` 的输出
+        # 都该带上新格式、也都该进日志文件。放晚了这两条就是最后一批「裸 print」。
+        # 它自己**绝不抛**（内部包了 try/except），所以这里不用管它的失败。
+        setup_logging(settings)
+        try:
+            if warm_llm:
+                _warm_llm()
 
-        _sweep_orphans(settings)
+            _sweep_orphans(settings)
 
-        with ExitStack() as stack:
-            pool = _open_pool(settings, stack)
-            event_store = _open_event_store(settings, stack, pool)
-            checkpointer = _open_checkpointer(settings, stack)
-
-            registry = stack.enter_context(
-                SessionRegistry(
-                    settings,
-                    make_llm=make_llm,
-                    runner_factory=runner_factory,
-                    pool=pool,
-                    event_store=event_store,
-                    checkpointer=checkpointer,
-                    require_approval_for=require_approval_for,
-                    workspace_root=settings.workspace_root,
-                    idle_timeout=settings.session_idle_timeout,
+            with ExitStack() as stack:
+                pool = _open_pool(settings, stack)
+                event_store = _open_event_store(settings, stack, pool)
+                checkpointer = _open_checkpointer(settings, stack)
+                catalog = _open_catalog(
+                    settings, stack, pool, event_store, checkpointer, make_llm
                 )
-            )
-            registry.start_reaper()
-            app.state.registry = registry
-            _announce(settings, registry)
-            try:
-                yield
-            finally:
-                # 后面由 ExitStack 收：registry（会话 → 容器）→ checkpointer → store → pool
-                app.state.registry = None
+
+                registry = stack.enter_context(
+                    SessionRegistry(
+                        settings,
+                        make_llm=make_llm,
+                        runner_factory=runner_factory,
+                        pool=pool,
+                        event_store=event_store,
+                        checkpointer=checkpointer,
+                        require_approval_for=require_approval_for,
+                        workspace_root=settings.workspace_root,
+                        idle_timeout=settings.session_idle_timeout,
+                        catalog=catalog,
+                    )
+                )
+                registry.start_reaper()
+                restored = _restore_history(registry, catalog)
+                app.state.registry = registry
+                _announce(settings, registry, restored)
+                try:
+                    yield
+                finally:
+                    # 后面由 ExitStack 收：registry（会话 → 容器）→ checkpointer → store → pool
+                    app.state.registry = None
+        finally:
+            # **ExitStack 收完之后**才摘日志：会话/池的收尾告警（关会话失败、关池失败）
+            # 仍然该进文件，所以顺序与「建的时候反过来」一致 —— 日志是最后进、最后出的。
+            # 用 `finally` 而不是顺序落在末尾：`_open_pool`/`_open_event_store` 失败时
+            # 会 `raise` 出这一整块（`_fatal` 之后重抛），顺序语句会被跳过、文件句柄
+            # 就泄漏在这个进程里了。
+            teardown_logging()
 
     app = FastAPI(title=PROJECT_NAME, version=VERSION, lifespan=lifespan)
     app.include_router(routes.router)
@@ -127,15 +159,17 @@ def _sweep_orphans(settings: Settings) -> None:
     if settings.sandbox_mode != "docker":
         return
     if not settings.sweep_sandbox_on_start:
-        print("提示：SWEEP_SANDBOX_ON_START=0 —— 跳过启动清扫，遗留容器不会被回收")
+        logger.info("提示：SWEEP_SANDBOX_ON_START=0 —— 跳过启动清扫，遗留容器不会被回收")
         return
 
     removed, error = sweep_orphan_containers()
     if error:
         # 清扫失败不挡启动：daemon 没起时后面建会话自然会给出更具体的报错。
-        print(f"提示：启动清扫未完成（{error}）", file=sys.stderr)
+        # 原文案是「提示：」但走的 stderr，这里保持**同一个流**用 warning（见
+        # `config/logging_setup.py` 的分流规则：info→stdout、warning 及以上→stderr）。
+        logger.warning("提示：启动清扫未完成（%s）", error)
     elif removed:
-        print(f"启动清扫：回收了 {removed} 个遗留沙箱容器")
+        logger.info("启动清扫：回收了 %d 个遗留沙箱容器", removed)
 
 
 def _open_pool(settings: Settings, stack: ExitStack) -> Any | None:
@@ -156,11 +190,11 @@ def _open_event_store(
 ) -> PostgresEventStore | None:
     """共享事件 store（只对 postgres 后端；sqlite 的事件只在内存里）。"""
     if settings.persistence_backend != "postgres":
-        print(
+        # 同 `_sweep_orphans`：原文案是「提示：」但走 stderr，用 warning 保持同一个流。
+        logger.warning(
             "提示：PERSISTENCE_BACKEND=sqlite —— 事件只存在进程内存里"
             "（GET /sessions/{id}/events 与 WS 回填读的就是它），**服务重启即丢**。\n"
-            "      要持久化事件流：docker compose up -d 后设 PERSISTENCE_BACKEND=postgres",
-            file=sys.stderr,
+            "      要持久化事件流：docker compose up -d 后设 PERSISTENCE_BACKEND=postgres"
         )
         return None
     try:
@@ -187,6 +221,48 @@ def _open_checkpointer(settings: Settings, stack: ExitStack) -> Any | None:
         raise
 
 
+def _open_catalog(
+    settings: Settings,
+    stack: ExitStack,
+    pool: Any | None,
+    event_store: PostgresEventStore | None,
+    checkpointer: Any | None,
+    make_llm: Callable[[str], Any] | None,
+) -> SessionCatalog:
+    """建读路径的探针（P9）。**两个后端都建**——没有它就没有会话目录。
+
+    `checkpointer` 的传法很关键：sqlite 传**共享的那一个实例**（自己再建一个指向同一
+    文件会各持一把锁，见模块 docstring），postgres 传 None（catalog 在池上自建一个
+    `PostgresSaver(pool)`，实例成本为零，且 `delete_thread` 需要它）。
+    """
+    return stack.enter_context(
+        SessionCatalog(
+            settings,
+            pool=pool,
+            event_store=event_store,
+            checkpointer=checkpointer,
+            make_llm=make_llm,
+            workspace_root=settings.workspace_root,
+        )
+    )
+
+
+def _restore_history(registry: SessionRegistry, catalog: SessionCatalog) -> int:
+    """把持久化里的历史会话登记进注册表（P9）。返回恢复条数（启动横幅用）。
+
+    **失败只告警，绝不挡启动**：历史会话读不出来，退化成 P7 的「列表从空开始」，
+    服务仍然是好的——而那正是用户此刻已有的能力，不该因为一次 DB 抖动就彻底起不来。
+    `catalog.discover()` 内部已经把每种失败都降级过了，这里是最后一道兜底。
+    """
+    try:
+        return registry.discover(catalog)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "警告: 恢复历史会话失败，本次列表不含历史会话: %s", e, exc_info=True
+        )
+        return 0
+
+
 def _warm_llm() -> None:
     """预热 `langchain_openai` 的 import（实测 ≈8.7s）。
 
@@ -196,11 +272,13 @@ def _warm_llm() -> None:
     started = time.perf_counter()
     import langchain_openai  # noqa: F401  仅为预热 import
 
-    print(f"预热：langchain_openai 已加载（{time.perf_counter() - started:.1f}s）")
+    logger.info(
+        "预热：langchain_openai 已加载（%.1fs）", time.perf_counter() - started
+    )
 
 
-def _announce(settings: Settings, registry: SessionRegistry) -> None:
-    """启动横幅（可观测：一眼看清后端、沙箱模式、回收策略）。"""
+def _announce(settings: Settings, registry: SessionRegistry, restored: int) -> None:
+    """启动横幅（可观测：一眼看清后端、沙箱模式、回收策略、**恢复了几条历史**）。"""
     backend = (
         f"postgres（{_safe_url(settings.database_url)}）"
         if settings.persistence_backend == "postgres"
@@ -212,22 +290,44 @@ def _announce(settings: Settings, registry: SessionRegistry) -> None:
         if settings.sandbox_mode == "docker"
         else "local（run_command 跑在本机）"
     )
-    print(
-        f"{PROJECT_NAME} {VERSION} 服务已就绪\n"
-        f"  持久化：{backend}\n"
-        f"  沙箱  ：{sandbox}\n"
-        f"  工作目录：{settings.workspace_root}（每会话一个子目录）\n"
-        f"  空闲回收：{registry.idle_timeout:.0f}s 未活动（running 的会话永不回收）\n"
-        f"  API   ：POST /sessions、POST /sessions/{{id}}/messages、"
-        f"POST /sessions/{{id}}/approval、WS /sessions/{{id}}/ws\n"
-        f"  测试页：http://127.0.0.1:8000/",
-        flush=True,
+    # 恢复历史这一行必须把**能力差异**说透（决定④）：sqlite 下会话能列出来，但点进去
+    # 没有事件流；用户看到的空时间线是他的历史真的没了，不是界面 bug。
+    if registry.history_available:
+        history = f"已恢复 {restored} 个（事件流可跨重启回放）"
+    else:
+        history = (
+            f"已恢复 {restored} 个（**仅会话，事件不落库**——"
+            "sqlite 后端点进去时间线是空的，那是真的没有）"
+        )
+    # 原来是带 `flush=True` 的 print —— `logging.StreamHandler` 每条记录后自动 flush，
+    # 语义不变（而且现在还会同时落进日志文件，这才是一眼看清后端配置的地方）。
+    logger.info(
+        "%s %s 服务已就绪\n"
+        "  持久化：%s\n"
+        "  沙箱  ：%s\n"
+        "  工作目录：%s（每会话一个子目录）\n"
+        "  空闲回收：%.0fs 未活动（running 的会话永不回收）\n"
+        "  历史会话：%s\n"
+        "  API   ：POST /sessions、POST /sessions/{id}/messages、"
+        "POST /sessions/{id}/approval、WS /sessions/{id}/ws\n"
+        "  测试页：http://127.0.0.1:8000/",
+        PROJECT_NAME,
+        VERSION,
+        backend,
+        sandbox,
+        settings.workspace_root,
+        registry.idle_timeout,
+        history,
     )
 
 
 def _fatal(what: str, e: Exception) -> None:
-    """启动期基础设施失败：给能照着做的提示，然后让 uvicorn 退出（不假装服务是好的）。"""
-    print(f"\n错误：{what}。{e}", file=sys.stderr)
+    """启动期基础设施失败：给能照着做的提示，然后让 uvicorn 退出（不假装服务是好的）。
+
+    原文案开头的 `\n` 去掉了：那是为了与前面的裸输出隔开一行，而带时间戳的日志
+    每条自成一行、已经隔开了；留着只会得到一个挂着格式前缀的空行。
+    """
+    logger.error("错误：%s。%s", what, e)
 
 
 def _safe_url(url: str) -> str:

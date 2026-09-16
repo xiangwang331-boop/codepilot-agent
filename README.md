@@ -8,14 +8,18 @@ LangGraph 驱动的 Multi-Agent 软件工程运行时。P0 阶段：**单 Agent 
 >
 > 完整设计/演进见 `DESIGN.md`；项目记忆与工作约定见 `CLAUDE.md`。
 
-当前阶段 **P8**：Supervisor + 6 个 Specialist 多 agent 编排 + Human Approval（interrupt）+
+当前阶段 **P9 + 服务端日志**：Supervisor + 6 个 Specialist 多 agent 编排 + Human Approval（interrupt）+
 Error Recovery + Condense（消息数 + token 预算双守卫）+ 实时 token 消耗可观测 +
 Docker Sandbox（run_command 执行隔离）+ PostgreSQL 持久化（checkpoint 与事件流落库）+
 **常驻服务层**（FastAPI REST + WebSocket：浏览器建会话、实时看多 agent 干活、遇到审批点按钮；
 每会话一个独立 workspace 目录 + 一个自己的沙箱容器，由服务端接管生命周期）+
 **React Web UI**（`web/`：委派时间线折叠、产出文件面板、令牌面板、事件过滤、`?session=` 深链、
-深色默认主题；构建产物托管在 `api/static/`）。CLI 与 Web 共用同一套装配与挂起语义，
-CLI 行为逐字不变。
+深色默认主题；构建产物托管在 `api/static/`）+
+**服务端日志**（终端 + `data/logs/codepilot.log` 双出口、按级别分流、按大小轮转）。
+
+P9 补的是**读路径**：会话目录不再只活在进程内存里，而是从持久化重建 ——
+**重启后侧栏里会话还在、历史事件可回放、还能接着续跑**（`runtime/catalog.py`）。
+CLI 与 Web 共用同一套装配与挂起语义，CLI 行为逐字不变。
 
 ## 目录结构
 
@@ -44,9 +48,14 @@ codepilot/
 │   ├── assembly.py         # build_runtime：ExitStack 持 ws/runner/saver/graph/store
 │   ├── driver.py           # run_task：跑到结束或挂起（on_interrupt 决定阻塞还是让出线程）
 │   ├── session.py          # Session：状态机 + worker 线程 + 审批槽 + 订阅者
-│   └── registry.py         # SessionRegistry：create/get/list/teardown + 空闲回收
+│   │                       #   + P9 第五态 interrupted + restore=（带历史出生）
+│   ├── registry.py         # SessionRegistry：create/get/list/teardown + 空闲回收
+│   │                       #   + P9 _known 常驻表 + get() 懒物化
+│   └── catalog.py          # P9：SessionCatalog —— 从库里重建会话目录（discover /
+│                           #   derive_status / load_events / purge / history_available）
 ├── api/                    # P7：常驻服务层
-│   ├── app.py              # create_app 工厂 + lifespan（预热 LLM / 建池 / 建表 / 清扫孤儿）
+│   ├── app.py              # create_app 工厂 + lifespan（装日志 / 预热 LLM / 建池 / 建表 /
+│   │                       #   恢复历史会话 / 清扫孤儿；收尾摘日志）
 │   ├── routes.py           # REST 端点（建会话 / 发指令 / 审批 / 删会话 / 事件查询）
 │   ├── ws.py               # WS 订阅端点（status + event 信封）
 │   ├── schemas.py          # Pydantic 请求/响应模型
@@ -58,10 +67,12 @@ codepilot/
 │   ├── src/hooks/ + components/   # 薄渲染层（React 19，零其他运行时依赖）
 │   └── src/styles/         # 手写 CSS + 设计令牌（深色默认，[data-theme] 切浅色）
 ├── config/
-│   └── settings.py         # 环境变量配置（含 context_limit / persistence_backend / api_host 等）
+│   ├── settings.py         # 环境变量配置（含 context_limit / persistence_backend / api_host 等）
+│   └── logging_setup.py    # P9：setup_logging / teardown_logging / get_logger
 ├── docker-compose.yml      # P6：PostgreSQL（docker compose up -d）
-├── data/                   # checkpoints.db（sqlite 后端，已 gitignore）
-└── tests/                  # 205 个 pytest：FakeLLM 闭环 + supervisor + condense + token + 沙箱/持久化 + API + UI 契约
+├── data/                   # checkpoints.db（sqlite 后端）+ logs/codepilot.log（整个 data/ 已 gitignore）
+└── tests/                  # 248 个 pytest：FakeLLM 闭环 + supervisor + condense + token + 沙箱/持久化
+                            #   + API + UI 契约 + P9 读路径（test_history）+ 日志（test_logging）
 ```
 
 ## 安装
@@ -69,6 +80,56 @@ codepilot/
 ```powershell
 uv sync            # 依据 pyproject.toml 安装依赖到 .venv
 ```
+
+## 启动
+
+最短可跑路径（**两个终端**）。默认 sqlite 后端即可跑，**不需要 PostgreSQL**。
+界面是 React 构建产物、**不进 git**，所以先构建一次（否则 `GET /` 是 404）：
+
+```powershell
+# --- 一次性：构建前端（产物流到 api/static/）---
+cd web
+npm install
+npm run build
+cd ..
+
+# --- 终端 1：后端 ---
+.venv\Scripts\python.exe -m uvicorn api.app:create_app --factory --port 8000
+#   起来后会打印启动横幅：持久化后端 / 沙箱模式 / 工作目录 / 空闲回收 / 恢复的历史会话数 / API 列表
+
+# --- 终端 2：前端（只在改前端时需要，带 HMR）---
+cd web
+npm run dev            # http://127.0.0.1:5173/ ；/sessions 前缀（HTTP + WS）自动代理到 8000
+```
+
+浏览器打开 **http://127.0.0.1:8000/** → 侧栏建会话 → 发需求 → 实时看多 agent 干活 → 遇到审批点按钮。
+
+### 日志看哪里
+
+日志**同时**出两处（`config/logging_setup.py`）：
+
+| 出口 | 里面有什么 |
+|---|---|
+| 后端那个终端 | 实时：启动横幅、建会话 / 下发 / 审批 / 回收 / 恢复、错误与降级告警 |
+| `data\logs\codepilot.log` | 同一批行（带日期）**加上 uvicorn 自己的启动行与 access 行** —— 关掉终端之后唯一的痕迹 |
+
+```powershell
+Get-Content data\logs\codepilot.log -Tail 30      # 跟着看加 -Wait
+```
+
+- `LOG_LEVEL`（默认 `INFO`）是**唯一旋钮**，同时管我们自己的 logger 与 uvicorn 的 access/error。
+- `LOG_DIR`（默认 `data/logs`）换落点；单文件 2 MiB、留 5 份备份轮转。
+- 分流沿用仓库既有约定：**info → stdout、warning 及以上 → stderr**。uvicorn 自己的
+  INFO 记录（`Uvicorn running on ...`、`Application startup complete.`）因此也走 stdout。
+- **access 只记非 2xx**：前端每 2 秒轮询 `GET /sessions`，全量会把日志刷成健康检查流水账；
+  失效深链的 404、删库失败的 500 一条不少。
+- 日志只到**动作级**——建会话 / 下发 / 审批 / 回收 / 恢复 / 后台线程吞掉的异常（带栈）。
+  **不记 agent 的每一步**，那层由事件流 + 界面承载。
+- 假设**单进程**（与启动清扫同一条假设）：多进程写同一个文件要靠轮转的 rename 兜住，
+  不是它擅长的场景。
+
+> **要「重启后历史还在、还能续跑」就得上 PostgreSQL**：sqlite 后端下事件从不落库，
+> 会话能列出来、但点进去时间线是空的（界面上有横幅明说）。见下「PostgreSQL 持久化」。
 
 ## 配置（环境变量）
 
@@ -88,6 +149,8 @@ $env:LLM_MODEL    = "deepseek-v4-flash"
 # $env:API_PORT = "8000"
 # $env:SESSION_IDLE_TIMEOUT = "1800"                  # 空闲会话回收秒数（running 态永不回收）
 # $env:SWEEP_SANDBOX_ON_START = "1"                   # 默认开；设 0 关掉启动时对遗留沙箱容器的清扫
+# $env:LOG_LEVEL = "INFO"                             # P9：日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
+# $env:LOG_DIR   = "data\logs"                        # P9：日志落点（默认 <项目根>/data/logs）
 ```
 
 ### Docker Sandbox（P5，可选）
@@ -152,14 +215,16 @@ interrupt 恢复的节点会从头重跑、发出重复事件，回放会标出�
 [Coder] 完成
 ```
 
-## 起服务（P7）
+## 起服务（细节）
+
+> 最短可跑路径见上面的 **「启动」**；这一节是端点表与设计细节。
 
 CLI 之外多了一个常驻服务：浏览器建会话、发需求、实时看多 agent 干活、遇到审批点按钮。
 **默认 sqlite 模式即可跑**，不需要 PostgreSQL：
 
 ```powershell
 .venv\Scripts\python.exe -m uvicorn api.app:create_app --factory --port 8000
-# 浏览器打开 http://127.0.0.1:8000/  （P8 的 React UI；需先 npm run build，见下节）
+# 浏览器打开 http://127.0.0.1:8000/  （React UI；需先 npm run build，见下节）
 ```
 
 > `--factory` 不能省：`create_app` 是**工厂函数**，刻意不写模块级 `app = create_app()`
@@ -171,13 +236,18 @@ CLI 之外多了一个常驻服务：浏览器建会话、发需求、实时看�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `POST` | `/sessions` | 建会话 → `201 {"thread_id","status"}`（每会话独立 workspace 目录 + 自己的沙箱容器） |
-| `GET` | `/sessions` | 列出当前进程内所有会话 |
-| `GET` | `/sessions/{id}` | 单个会话状态（`idle` / `running` / `awaiting_approval` / `closed`）+ 待批 payload |
-| `POST` | `/sessions/{id}/messages` | 提交需求 → `202`；**会话忙时 `409`** |
+| `GET` | `/sessions` | 列出**全部**会话：本进程活动过的在前 + 重启后恢复的历史记录接在后；带能力位 `history_available` |
+| `GET` | `/sessions/{id}` | 单个会话状态（`idle` / `running` / `awaiting_approval` / `interrupted` / `closed`）+ 待批 payload；历史会话**懒物化** |
+| `POST` | `/sessions/{id}/messages` | 提交需求 → `202`；**会话忙时 `409`**（`running` 与 `awaiting_approval` 都算忙） |
 | `POST` | `/sessions/{id}/approval` | `{"approved": true}` 批准 / `false` 拒绝 |
-| `DELETE` | `/sessions/{id}` | 关会话 → `204`（停 worker + `docker rm -f` 容器 + 保留落盘产物） |
-| `GET` | `/sessions/{id}/events?since=` | 拉历史事件（进程内环形缓冲，重启即空） |
+| `DELETE` | `/sessions/{id}` | 关会话 → `204`（停 worker + `docker rm -f` 容器 + **连库一起删** events/checkpoints）；**删库失败报 `500` 而不是 204** |
+| `GET` | `/sessions/{id}/events?since=` | 拉历史事件（postgres 后端下含**重启前**的；sqlite 下只有本进程的） |
 | `WS` | `/sessions/{id}/ws?since=` | 订阅事件流 |
+
+**`interrupted` 是 P9 新增的第五态**：进程被杀时正在跑的会话恢复出来后标成它（**只读**）。
+绝不能恢复成 `running` —— 那种会话既不能跑（`begin()` 只接受 idle）也不能被回收
+（`reapable()` 拒绝 running），只能删掉。停在审批点的会话则恢复成 `awaiting_approval`，
+**可以接着点批准**（跨进程 `Command(resume=...)` 实测可行）。
 
 未知 id 一律 `404`；`task` 为空 `422`。WS 是**纯订阅**（动作全走 REST），连接即推一条
 `status` 信封，之后每条事件一个信封——用 `kind` 区分，否则客户端分不清「会话忙」和「agent 事件」：
@@ -188,21 +258,28 @@ CLI 之外多了一个常驻服务：浏览器建会话、发需求、实时看�
 {"kind":"error","message":"..."}
 ```
 
-`?since=N` 是**进程内序号**（不是 DB 游标），断线重连靠它补发；服务重启后序号从零开始，
-需要跨重启的完整历史用 `PERSISTENCE_BACKEND=postgres` + `--events` 回放（见上）。
+`?since=N` 是**闭区间**（`seq >= since`），断线重连要传 `<最后收到的 seq> + 1`，传 lastSeq
+会重复收到最后一条。seq 本身仍是**会话内的内存下标**（不是 DB 游标）——P9 恢复历史时把整段
+历史按序灌进内存，于是历史天然占 `0..N-1`、新事件接着 `N`，**重启后序号是「接着历史」而不是
+「从零开始」**，回填 / `?since` / 界面去重全都不用改。
 
-### 两个要注意的点
+### 三个要注意的点
 
 - **sqlite 模式下事件只在内存里**：不落库、服务重启即丢，`/events` 与 WS 的历史都只有本进程的。
+  此时 `GET /sessions` 的 `history_available` 是 `false`、列表里会出现**空壳会话**
+  （从 checkpoint 反推出来的，点进去时间线是空的），界面有横幅明说这件事——**不假装一样**。
   要持久化就设 `PERSISTENCE_BACKEND=postgres`（checkpoint 与事件流一起落库）。
+- **历史会话是按需物化的**：库是「有哪些会话」的真源，内存 `Session` 只是缓存。
+  重启后 `GET /sessions` 列的是**只读记录**（零成本），真有人点开某个会话才建图 + 读事件流。
+  从未跑过、也没留下事件的空会话不可发现（要可发现就得发「已创建」事件，那会改事件流形状）。
 - **启动清扫假设「同一时刻只有一个 CodePilot 服务进程」**：起服务时按 `label=codepilot.managed=1`
   回收上个进程遗留的沙箱容器（防异常退出后容器堆积）。**按 label 筛而不是按名字前缀**——后者会
   误删你自己起的同名容器。多进程部署前必须先关掉 `SWEEP_SANDBOX_ON_START`，否则会互相删容器。
 
-## Web UI（P8）
+## Web UI（细节）
 
-React 19 + TypeScript + Vite，**后端一行不改**（P7 已经在推结构化事件，前端只是把它渲染出来）。
-两个模式：
+React 19 + TypeScript + Vite（P8 替换掉 P7-6 的单文件测试页），**后端一行不改**
+（P7 已经在推结构化事件，前端只是把它渲染出来）。两个模式：
 
 ```powershell
 # --- 生产态：构建产物流到 api/static，由 FastAPI 的 StaticFiles 托管（一个进程）---
@@ -248,7 +325,10 @@ npm run dev           # http://127.0.0.1:5173/
 .venv\Scripts\python.exe -m pytest -v
 ```
 
-205 个 pytest（其中 14 个在环境不满足时模块级自动跳过：9 个 PG 集成 + 5 个 Docker 沙箱集成），覆盖：单 Agent ReAct
+248 个 pytest。环境不满足的用例**模块级自动跳过**（9 个 PG 集成 + 2 个 P9 真 PG 历史集成 +
+5 个 Docker 沙箱集成）——本机 Docker Desktop 起着、不设 `TEST_DATABASE_URL` 时是
+**237 passed + 11 skipped**，设上就是 **248 个全部真跑、无 skip**（但有一个偶发失败，见下面的
+⚠️）。覆盖：单 Agent ReAct
 闭环（FakeLLM 确定性）、工具/workspace 守卫、SQLite 持久化与 resume、supervisor 多 agent 编排
 （委派链/父子隔离/只读边界）、Human Approval interrupt 挂起恢复、Error Recovery（子图异常兜底）、
 Condense（消息数 + token 预算双守卫、最新 tool_call↔ToolMessage 配对完整、事件可观测）、
@@ -258,7 +338,28 @@ Docker Sandbox（CommandRunner 注入链路 / Docker CLI 参数与错误回流 /
 降级 / 回放判重 / sqlite 默认分支行为不变）、**服务层**（`tests/test_api.py`：状态机与 409 两态、
 `{"approved": true}` → 精确 `"yes"`、WS 冒烟与重连、shutdown 停容器、per-session emitter 隔离）、
 **UI 契约**（`tests/test_web_ui_contract.py`：字段名逐字对齐 `web/src/api/types.ts`、事件发射
-顺序（委派嵌套/挂起重跑/拒绝闭合）、错误体形状、`write_file` 带完整 content、构建产物托管）。
+顺序（委派嵌套/挂起重跑/拒绝闭合）、错误体形状、`write_file` 带完整 content、构建产物托管）、
+**读路径**（`tests/test_history.py`：在**同一个 `tmp_path` 上起两次 `create_app`** 就是一次真
+「重启」——目录重建 / 状态从 `graph.get_state()` 重推 / 事件回放 / 续跑 seq 不重来 / `DELETE`
+连库删 / sqlite 空壳会话 + `history_available=false`）、**日志**（`tests/test_logging.py`：
+`setup_logging` 幂等（同一条记录只写一次）、info→stdout / warning→stderr 分流、access 只留
+非 2xx、`log_dir=None` 一个文件都不落、**uvicorn 自己挂在父 logger 上的 handler 被替换而不是
+并存**（并存会每条记录写两遍）、`teardown_logging` 真的归还文件句柄）。
+
+> ⚠️ **诚实记录**：设上 `TEST_DATABASE_URL` 跑**全量**时，
+> `tests/test_history.py::test_pg_restart_replays_the_full_event_stream` 会**偶发**失败
+> （实测 3–4 次里 1 次，`AssertionError: assert 'interrupted' == 'idle'`），并伴随一条
+> 「事件持久化失败，已降级……the pool 'pool-1' is already closed」。这是 **P9 遗留的竞态、
+> 不是日志功能引入的**（把 `setup_logging`/`teardown_logging` 整体 no-op 掉之后仍能复现）。
+> 机理见 `DESIGN.md` §7 的 P9+ 记录（末条），修法已记在 `CLAUDE.md` 的「当前进度」P9+ 条。
+>
+> ⚠️ **另一个已知问题：带 `TEST_DATABASE_URL` 跑全量会往你的库里留垃圾**。
+> `tests/test_postgres_live.py` 每个用例建一个随机 `pg-<uuid>` 线程却**从不清理**，所以
+> 别拿你正在用的那个库当测试库（这也正是集成测试读 `TEST_DATABASE_URL` 而不读
+> `DATABASE_URL` 的原因）。其中 2 个用例建的是**事件**——那些 `pg-*` 会话会真的出现在
+> 侧栏里（可以在界面上逐个删掉）；另外 6 个只建 **checkpoint**，而 PG 的会话目录源只查
+> `events` 表 → 它们**不会出现在侧栏、因此在界面上删不掉**，只能手动上 SQL。详见
+> `DESIGN.md` §7 的 P9 条（末段「晚补记」）。
 
 前端单测是另一套（**不需要浏览器**，只测 `model/` + `api/` 的纯函数）：
 
@@ -310,4 +411,10 @@ $env:TEST_DATABASE_URL = "postgresql://codepilot:codepilot@localhost:5432/codepi
   挂起审批点按钮、静态测试页、启动清扫孤儿容器）
 - **P8**（✅ 完成）React Web UI（`web/`：委派时间线折叠 / 产出文件面板 / 令牌面板 / 事件过滤 /
   `?session=` 深链 / 深色默认主题；构建产物托管到 `api/static/`，**后端一行不改**）
-- P9 起：Git / Eval
+- **P9**（✅ 完成）会话与事件的「读路径」（从 PG/checkpoint 重建会话列表与历史：`runtime/catalog.py`
+  + registry 懒物化 + `interrupted` 第五态 + `DELETE` 连库删；路由与前端协议形状不变）
+- **P9+**（✅ 完成）服务端日志（`config/logging_setup.py`：终端 + `data/logs/codepilot.log` 双出口、
+  按大小轮转、uvicorn 日志并进同一套格式、后台线程吞掉的异常带栈落盘）
+- P10 起：Git / Eval
+
+> P9 这个编号是**插队**进来的：原路线上 P9 是 Git Workflow、P10 是 Eval，现在顺延成 P10 / P11。

@@ -7,17 +7,23 @@ HTTP 层不含任何状态：每个端点都是「翻译」——把 `Session` �
 | 端点 | 语义 | 状态码 |
 |---|---|---|
 | `POST   /sessions` | 建会话（可选自定义 id） | 201 / 409（id 已占用） |
-| `GET    /sessions` | 列出全部会话 | 200 |
-| `GET    /sessions/{id}` | 单个会话状态 | 200 / 404 |
+| `GET    /sessions` | 列出全部会话（**含重启后恢复的历史会话**） | 200 |
+| `GET    /sessions/{id}` | 单个会话状态（历史会话**懒物化**） | 200 / 404 |
 | `POST   /sessions/{id}/messages` | 发指令（新任务或追加） | 202 / 404 / **409 忙** |
 | `POST   /sessions/{id}/approval` | 批准/拒绝挂起的委派 | 200 / 404 / **409 没在等审批** |
-| `DELETE /sessions/{id}` | 销毁会话（收容器） | 204 / 404 |
-| `GET    /sessions/{id}/events` | 事件回填（内存，支持 `?since=`） | 200 / 404 |
+| `DELETE /sessions/{id}` | 销毁会话（收容器 + **连库一起删**） | 204 / 404 / **500 删库失败** |
+| `GET    /sessions/{id}/events` | 事件回填（支持 `?since=`） | 200 / 404 |
 
 **409 覆盖两个状态**：`running` 与 `awaiting_approval`。这不是保守起见——挂起中再
 `invoke` 一次，LangGraph 会**静默吞掉**那个 interrupt（`next` 清空、待批准消失、
 文件从未创建、无异常无日志，探针实证）。所以「忙」必须挡在这两个状态上，
 绝不能用「worker 线程是否还活着」判断。
+
+**P9：读路径接上了持久化。** 进程内存不再是会话目录的真源——`SessionRegistry.get()`
+未命中内存时会从 `runtime/catalog.py` 的记录**懒物化**一个会话，所以重启后
+`GET /sessions`、`GET /sessions/{id}`、WS 订阅、续跑、审批全部自动可用，
+本文件的端点**一处签名都没改**（这是 P9 的设计目标：缺口在 registry 那一层补，
+越往上改得越少）。唯一的例外是 `DELETE`：它现在要连库一起删，删库失败必须报错。
 """
 from __future__ import annotations
 
@@ -34,8 +40,12 @@ from api.schemas import (
     SessionList,
     TaskRequest,
 )
+from config.logging_setup import get_logger
+from runtime.catalog import CatalogError
 from runtime.registry import SessionExistsError, SessionRegistry
 from runtime.session import Session, SessionStatus
+
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -94,7 +104,15 @@ def create_session(
 
 @router.get("/sessions", response_model=SessionList)
 def list_sessions(registry: Registry) -> SessionList:
-    return SessionList(sessions=[SessionInfo(**s) for s in registry.snapshots()])
+    """列出全部会话：本进程活动过的在前，重启恢复的历史记录接在后。
+
+    两段各自「最近活动在前」而不是混排——两段的时钟不可比（见 `registry.snapshots`）。
+    `history_available=false` 时前端必须提示「有会话但没有事件流」（决定④）。
+    """
+    return SessionList(
+        sessions=[SessionInfo(**s) for s in registry.snapshots()],
+        history_available=registry.history_available,
+    )
 
 
 @router.get("/sessions/{thread_id}", response_model=SessionInfo)
@@ -104,13 +122,32 @@ def get_session(thread_id: str, registry: Registry) -> SessionInfo:
 
 @router.delete("/sessions/{thread_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_session(thread_id: str, registry: Registry) -> Response:
-    """销毁会话并移除（之后 GET 是 404）。容器一并 `rm -f`。
+    """销毁会话并移除（之后 GET 是 404）。容器一并 `rm -f`，**并连库一起删**。
 
     `running` 时也允许——这是用户的显式指令，堵住就没有别的办法收掉一个卡住的会话了
-    （回收线程则相反：它只碰 `idle`/`awaiting_approval`，因为用户并不知道它在动）。
+    （回收线程则相反：它只碰 `idle`/`awaiting_approval`/`interrupted`，因为用户并不知道它在动）。
     代价是正在跑的那条命令会以「容器没了」的 ERROR 收场，结果被丢弃。
+
+    P9 起「移除」必须是**真删**（决定⑤）：目录改成从库里读之后，只摘内存会让删掉的
+    会话重启后复活——比不能删更糟。所以删库失败**不能**返回 204，那是在骗用户
+    （他下次重启会看到它回来，而这一次的 204 让他以为删干净了）。
     """
-    if not registry.close(thread_id):
+    try:
+        removed = registry.close(thread_id)
+    except CatalogError as e:
+        # 「删库失败要报 500 而不是 204」的另一半是**留下痕迹**：用户拿到 500 只说明
+        # 「现在不对」，要知道「库里还残留着什么、下次重启会不会回来」得看这个栈。
+        # 内存里那个会话此刻已经摘掉了、容器也关了 —— 这个不一致状态必须可查。
+        logger.error(
+            "删除会话 %s 失败：内存已移除，但持久化数据没删掉（重启后可能复活）",
+            thread_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"会话 {thread_id} 已从内存移除，但持久化数据删除失败：{e}",
+        ) from e
+    if not removed:
         raise HTTPException(status_code=404, detail=f"会话 {thread_id} 不存在")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -161,12 +198,16 @@ def get_events(
     registry: Registry,
     since: Annotated[int, Query(ge=0, description="只返回 seq >= since 的事件")] = 0,
 ) -> EventList:
-    """事件回填。**读的是进程内存，不是数据库**——服务重启即丢。
+    """事件回填，支持 `?since=` 断线重连游标。
 
-    `since` 是给 WS 断线重连用的：连上时先推全量回填，断线期间错过的事件靠
-    `?since=<最后收到的 seq+1>` 补齐，不需要动 P6 已验证的落库代码（`_SELECT_SQL`
-    根本没查 `id` 列，走 DB 游标要改 SQL + Event + row_to_event）。
-    postgres 后端下事件另有落库（`python main.py --events <id>` 可回放）。
+    **P9 起读的是持久化历史**（`PERSISTENCE_BACKEND=postgres`）：会话被懒物化时
+    `catalog.load_events()` 已把整段历史按序灌进 `Session._events`，所以这里读到的
+    下标即 seq、从 0 起连续，框架期完全没变。sqlite 后端的事件仍在进程内存里
+    （重启即丢），此时 `list_sessions` 的 `history_available=false` 会让前端明说
+    这件事——**不能假装一样**（决定④）。
+
+    `since` 的语义仍是 `seq >= since`（闭区间），所以断线重连要传
+    `<最后收到的 seq> + 1`，传 lastSeq 会重复收到最后一条。
     """
     session = _require(registry, thread_id)
     events = [

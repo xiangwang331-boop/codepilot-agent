@@ -13,9 +13,12 @@ const BOTTOM_THRESHOLD = 32;
 export function EventTimeline({
   blocks,
   filters,
+  historyAvailable,
 }: {
   blocks: Block[];
   filters: FilterState;
+  /** false（sqlite 后端）时空时间线要说清「不是没跑过，是没落库」（P9 决定 ④）。 */
+  historyAvailable: boolean;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -49,7 +52,20 @@ export function EventTimeline({
       <div className="timeline">
         <div className="empty">
           <h2>还没有事件</h2>
-          <p>在下面输入开发需求，Supervisor 会把它拆给 specialist 执行，过程实时显示在这里。</p>
+          {/*
+            两种「空」完全不同：一种是**还没跑过**（去输入需求就有），
+            另一种是**跑过但读不回来**（sqlite 后端事件不落库，重启即丢）。
+            后者的空时间线是既成事实，让用户以为是界面 bug 才是最坏的结果。
+          */}
+          {historyAvailable ? (
+            <p>在下面输入开发需求，Supervisor 会把它拆给 specialist 执行，过程实时显示在这里。</p>
+          ) : (
+            <p>
+              sqlite 后端的事件只存在进程内存里，<strong>服务重启即丢</strong>：
+              重启前跑过的会话从 checkpoint 恢复后就是空的，新建的会话则是还没下发过指令。
+              要留住事件流，用 <code>PERSISTENCE_BACKEND=postgres</code> 后端。
+            </p>
+          )}
         </div>
       </div>
     );

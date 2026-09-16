@@ -35,7 +35,9 @@ export function EmptyState({
         <p>
           {reason ?? "这个会话 ID 已经不在服务端了。"}
           <br />
-          会话目录保存在<strong>进程内存</strong>里，服务重启后就会清空 —— 这不是界面出错了。
+          {/* ⚠️ P9 起不能再归因到「服务重启」：持久化里的会话会被恢复出来（`runtime/catalog.py`），
+              4404 现在只意味着「从没被持久化过 / 已被删除 / 恢复失败」。 */}
+          服务端没有这个会话：它要么从没跑过、要么已被删除、要么恢复失败。这不是界面出错了。
         </p>
         <button onClick={hasSessions ? onPick : onCreate} disabled={creating}>
           {hasSessions ? "从列表里选一个" : creating ? "创建中…" : "+ 新建会话"}

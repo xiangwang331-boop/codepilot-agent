@@ -22,6 +22,7 @@ from agent.condense import make_condense_node
 from agent.specialists import build_supervisor_prompt
 from agent.supervisor import build_supervisor_graph
 from conftest import FakeLLM, _tool_call
+from config import settings as settings_mod
 from config.settings import Settings
 from tools.command_runner import (
     CONTAINER_LABEL,
@@ -296,6 +297,9 @@ def test_docker_description_mentions_workspace_relative_path(tmp_path):
 # ---------- Settings ----------
 
 def test_settings_sandbox_mode_from_env(monkeypatch, tmp_path):
+    # 屏蔽 .env 加载（关键坑 #28）：本机 .env 现在设了 SANDBOX_MODE=docker，
+    # 不屏蔽的话这个用例测的是「本机 .env 写了什么」而不是「env 未设置 → 默认 local」。
+    monkeypatch.setattr(settings_mod, "_load_dotenv", lambda: None)
     monkeypatch.delenv("SANDBOX_MODE", raising=False)
     monkeypatch.setenv("SANDBOX_IMAGE", "my-img:1")
     s = Settings.from_env()
@@ -308,6 +312,7 @@ def test_settings_sandbox_mode_from_env(monkeypatch, tmp_path):
 
 
 def test_settings_sandbox_mode_invalid_falls_back_local(monkeypatch):
+    monkeypatch.setattr(settings_mod, "_load_dotenv", lambda: None)  # 同上，见关键坑 #28
     monkeypatch.setenv("SANDBOX_MODE", "kubernetes")
     s = Settings.from_env()
     assert s.sandbox_mode == "local"          # 非法值 → 告警回退 local，不静默
