@@ -5,11 +5,15 @@ __pycache__/
 workspace_data/
 data/
 .env
-uv.lock
+
+# --- IDE ---
+# JetBrains 的工程配置：里面是本机绝对路径（.idea/dbnavigator.xml 指向
+# <本机>\data\checkpoints.db）、个人检查配置，对别人没有意义。
+# 曾经被跟踪过 8 个文件，2026-09-23 已 git rm --cached 移出跟踪。
+.idea/
 
 # --- P8 前端 ---
-# 依赖。`web/package-lock.json` **要提交**（与下面 uv.lock 的取舍相反）——
-# npm 没有锁文件就是浮动版本，构建不可复现。见 DESIGN.md 的说明。
+# 依赖。`web/package-lock.json` **要提交**——npm 没有锁文件就是浮动版本，构建不可复现。
 web/node_modules/
 # TS 增量构建缓存（Vite 模板写到 node_modules/.tmp，这里兜一道防手滑）
 web/*.tsbuildinfo
