@@ -305,7 +305,7 @@ describe("SessionInfo 的字段名（与后端 `test_session_info_fields_match_t
     for (const s of all) SAMPLE.status = s;
   });
 
-  it("SessionList 带 history_available（P9 决定④的能力位）", () => {
+  it("SessionList 带 history_available（P9 加的能力位）", () => {
     // 标注成 `SessionList` 才是真的钉：后端去掉这个键 → 这里编译不过。
     const list: SessionList = { sessions: [SAMPLE], history_available: true };
     expect(Object.keys(list).sort()).toEqual(["history_available", "sessions"]);

@@ -11,7 +11,7 @@ CLI 的用法**完全不变**（`build_checkpointer(settings)` 内部自己建�
 
 **连接参数必须与 `PostgresSaver.from_conn_string` 逐项一致**（见 checkpointer.py 注释）：
 - `autocommit=True` 缺了 → INSERT 停在隐式事务、连接归还池时既不提交也不报错 → **事件静默全丢**
-  （P6 关键坑 #22 在池化后原样复现，是最难查的一类 bug）
+  —— 最难查的一类 bug
 - `prepare_threshold=0` → 关掉 prepared statement 复用
 - `row_factory=dict_row` 缺了 → `row["type"]` 报 tuple indices
 

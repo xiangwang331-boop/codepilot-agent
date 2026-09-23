@@ -22,3 +22,12 @@ web/*.tsbuildinfo
 # 待提交变更。而 `api/app.py:113` 是 `if STATIC_DIR.is_dir():` —— 目录不存在只是
 # 不挂载（`GET /` 404，REST/WS 全正常），不需要占位文件。
 api/static/
+
+# --- 内部文档：仅本地保留，不进仓库 ---
+# CLAUDE.md（Claude Code 的项目记忆）与 DESIGN.md（设计文档 + 演进记录）在
+# 2026-09-23 已用 filter-branch 从**全部提交**中移除（不只是最新那版）——
+# 只 git rm --cached 的话历史里仍能全文翻到，等于没删。本地文件原样保留。
+# README.old.md 是重写 README 时留下的旧版备份（同样是内部视角的流水账）。
+CLAUDE.md
+DESIGN.md
+README.old.md

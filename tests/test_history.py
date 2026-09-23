@@ -357,7 +357,7 @@ def test_sqlite_degrades_to_shell_sessions_with_explicit_flag(tmp_path):
         assert body["history_available"] is False
         info = body["sessions"][0]
         assert info["thread_id"] == "shell"
-        assert info["event_count"] == 0, "sqlite 下事件从不落库（关键坑 #46）"
+        assert info["event_count"] == 0, "sqlite 下事件从不落库"
         assert _events(client, "shell") == []  # 空时间线，不是 404
 
         # 结果是**从 checkpoint 的 state 重建**的，所以「能看结果、看不到过程」
@@ -386,7 +386,7 @@ def test_derive_status_table():
 
     # ⚠️ 停在审批点的会话同时满足「有未执行节点」和「state 写着 running」
     #（interrupt 就在 tools 节点里抛出）—— 所以 interrupts 必须**先判**，
-    # 否则决定⑥ 会被静默降级成只读。
+    # 否则「停在审批点」会被静默降级成只读。
     assert derive_status({"status": "running"}, has_next=True, has_interrupts=True) is SessionStatus.AWAITING_APPROVAL
 
 
@@ -578,7 +578,7 @@ def _pg_ready() -> bool:
     """库可达才跑（连不上自动 skip，与 `test_postgres_live.py` 同一判据同一 env）。
 
     **刻意读 TEST_DATABASE_URL 而不是 DATABASE_URL**：这些用例会真往库里写会话与事件，
-    不该因为开发者本机 `.env` 设了 DATABASE_URL 就顺手污染他正在用的库（关键坑 #27）。
+    不该因为开发者本机 `.env` 设了 DATABASE_URL 就顺手污染他正在用的库。
     """
     if not TEST_DATABASE_URL:
         return False

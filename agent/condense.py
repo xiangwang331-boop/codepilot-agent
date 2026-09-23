@@ -1,6 +1,6 @@
 """P4-3: Condense 节点 —— 长会话 messages 压缩。
 
-设计（见 DESIGN.md §6 决策 #15/#17）：
+设计：
 - messages 是唯一真源（add_messages）。超过预算时，把中间历史压缩为摘要
   （RemoveMessage，按 id 精确删），保留头部（系统提示 + 任务）与尾部 recent 窗口，
   追加一条 rule-based 摘要 SystemMessage。

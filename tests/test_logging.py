@@ -21,7 +21,7 @@
 `logging.lastResort` 在 pytest 里**不可达**（`_pytest.logging` 会往 root 挂两个
 `LogCaptureHandler`，`callHandlers` 的 `found` 永远 > 0），所以那条性质**没法在 pytest
 里断言**。它是真的（在裸进程里实测逐字节相同），但把它写成用例只会写出一条假绿。
-详情见 `config/logging_setup.py` 的模块 docstring 与 CLAUDE.md 关键坑 #65。
+详情见 `config/logging_setup.py` 的模块 docstring。
 """
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ import { summarizeArgs, type ToolRow } from "../model/events";
  *
  * ⚠️ **拿不到工具结果原文**：`agent/core.py:130-134` 发 `TOOL_CALL_COMPLETED` 时
  * 没有传 `detail`，所以这里只能显示「工具名 + 参数」。这不是 UI 偷懒，是后端
- * 事件契约的限制（已记进 DESIGN.md 的 defer）。
+ * 事件契约的限制（属于已知的待办项）。
  */
 export function ToolRowView({ row }: { row: ToolRow }): React.JSX.Element {
   // 三种状态各自的记号：✓ 完成 / ✗ 失败 / ▸ 进行中

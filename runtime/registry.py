@@ -107,11 +107,11 @@ class SessionRegistry:
 
     @property
     def history_available(self) -> bool:
-        """重启后还能不能读回**事件流**（决定④的提示依据，路由只读这一个口）。
+        """重启后还能不能读回**事件流**（启动横幅与列表能力位的依据，路由只读这一个口）。
 
         没有 catalog（纯内存注册表：全部既有单测）也是 False —— 那种进程重启后
         连会话本身都没有，谈不上「历史可用」。sqlite 后端同样是 False：会话能从
-        checkpoint 反推出来（空壳），但事件从不落库（关键坑 #46）。
+        checkpoint 反推出来（空壳），但事件从不落库。
         """
         return self._catalog is not None and bool(self._catalog.history_available)
 

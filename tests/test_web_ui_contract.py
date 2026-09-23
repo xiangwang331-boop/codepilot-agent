@@ -29,7 +29,7 @@
 
 ## 为什么用 `GET /sessions/{id}/events` 而不是 WS 抓流
 
-WS 的 `receive_json()` **没有超时参数**（CLAUDE.md 关键坑 #39），少收一条就是永久挂死。
+WS 的 `receive_json()` **没有超时参数**，少收一条就是永久挂死。
 REST 回填拿的是同一份 `session.event_envelopes()`，形状逐字相同（`{seq, event}`），
 但没有阻塞风险。WS 本身另有专门的形状断言（`test_ws_envelopes_match_types_ts`），条数确定。
 
@@ -464,7 +464,7 @@ def test_write_file_args_carry_full_content(tmp_path):
     )
 
     # 反向钉死：Completed **不带** detail —— 所以 UI 拿不到工具结果原文，只能显示
-    # 「工具名 + 参数」。这是后端限制，写进 DESIGN.md 的 defer，不绕过。
+    # 「工具名 + 参数」。这是后端限制，属于已知的待办项，不在这里绕过。
     completed = [
         e["event"]
         for e in events
@@ -616,8 +616,8 @@ def test_multiple_interrupts_in_one_batch_drop_later_delegates(tmp_path):
     `"running"`。`runtime/session.py:459-467` 于是补发一条**图外**的
     `AgentFailed(message="状态 running")`，会话落到 `idle`。
 
-    与 CLAUDE.md 关键坑 #40 的记述**矛盾**：那里说「答一个、节点重跑、再 interrupt」，
-    实际情况是**第二轮重跑到第二个 interrupt 就整个咽掉了**（没有第二次挂起）。
+    与「`snap.interrupts` 会一轮一轮逐个冒出来」的朴素预期**矛盾**：实际情况是**第二轮
+    重跑到第二个 interrupt 就整个咽掉了**（没有第二次挂起）。
 
     用探针收敛出的判据（三个变体，`require_approval_for` 与脚本不同）：
 
@@ -640,8 +640,7 @@ def test_multiple_interrupts_in_one_batch_drop_later_delegates(tmp_path):
     断言 —— 「`snap.next` 空、但 state 里的 `status` 还是 `running`」正是 interrupt
     被吞的签名，应当报错而不是当成正常收尾。
 
-    这条用例**故意钉住错误行为**：后端修好后它会红，那时连同这段 docstring、
-    CLAUDE.md 关键坑 #40 与 `DESIGN.md` 一起更新。
+    这条用例**故意钉住错误行为**：后端修好后它会红，那时连同这段 docstring 一起更新。
     """
     run = _run_batch_flow(tmp_path, BATCH_CODER_TWICE)
     rows = [

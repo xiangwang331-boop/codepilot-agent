@@ -151,7 +151,7 @@
   background: var(--fg-mute);
 }
 
-/* P9 决定④的横幅：sqlite 下「会话还在但事件流没了」的明确提示，只在能力位为 false 时渲染。 */
+/* sqlite 下「会话还在但事件流没了」的明确提示，只在能力位为 false 时渲染。 */
 .rail__notice {
   margin: 0 8px 8px;
   padding: 8px 9px;

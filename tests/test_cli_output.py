@@ -6,7 +6,7 @@ P7 把「装配」和「interrupt 循环」搬进了 `runtime/assembly.py` + `ru
 把输出钉住。
 
 `test_cli_output_matches_pre_p7_golden` 的基线是重构前的逐字输出
-（重构前后各跑一遍同样脚本、diff 为空，见 DESIGN.md 的 P7-3 演进记录）。
+（重构前后各跑一遍同样脚本、diff 为空）。
 """
 from __future__ import annotations
 

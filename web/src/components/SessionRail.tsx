@@ -7,7 +7,7 @@ import type { SessionInfo } from "../api/types";
  * P9 起会话目录的真源是**持久化**（`runtime/catalog.py`），进程内存只是缓存 ——
  * 服务重启后历史会话照旧列在这里，所以这一栏不再是「重启就空」的易失视图。
  * 唯一的例外是**事件流**：`PERSISTENCE_BACKEND=sqlite` 时事件从不落库，
- * 会话还在但点进去时间线是空的 —— 由下面那条横幅明确说清（P9 决定 ④）。
+ * 会话还在但点进去时间线是空的 —— 由下面那条横幅明确说清。
  */
 export function SessionRail({
   sessions,

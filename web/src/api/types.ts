@@ -77,8 +77,8 @@ export interface SessionInfo {
  *
  * `history_available` 是**列表级**的能力位，不是每个会话的属性：它说的是「这个进程
  * 读不读得到历史事件流」。`PERSISTENCE_BACKEND=postgres` 时 true；sqlite 后端为 false
- * （事件从不落库，关键坑 #46），此时会话照样列得出来（从 checkpoint 反推）但点进去
- * 时间线是空的 —— 界面**必须**明说这件事，不能假装一样（P9 决定 ④）。
+ * （事件从不落库），此时会话照样列得出来（从 checkpoint 反推）但点进去
+ * 时间线是空的 —— 界面**必须**明说这件事，不能假装一样。
  */
 export interface SessionList {
   sessions: SessionInfo[];

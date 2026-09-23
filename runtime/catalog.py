@@ -1,6 +1,6 @@
 """P9: 会话目录 —— 从持久化里重建「有哪些会话、各自什么状态」。
 
-P6 让事件与 checkpoint 落了库（`DESIGN.md:304` 的动机之一就是「Web 端要能**回放**一次
+P6 让事件与 checkpoint 落了库（动机之一就是「Web 端要能**回放**一次
 会话的完整事件流」），但服务端三个读入口全走进程内存，而 `POST /sessions` 是往注册表里
 塞会话的**唯一入口** → 重启即空，库里的数据只有 CLI 的 `--events` 一个消费者。P9 补的
 就是这条**读路径**。
@@ -9,7 +9,7 @@ P6 让事件与 checkpoint 落了库（`DESIGN.md:304` 的动机之一就是「W
 
 1. **目录从哪来**（`discover`）：postgres 走 `events` 表（有 thread_id 也有
    `(thread_id, id)` 索引，一次 GROUP BY 就到手「谁 + 多少条 + 最后活动」）；
-   sqlite 后端事件**根本不落库**（关键坑 #46），只能从 checkpoint 反推
+   sqlite 后端事件**根本不落库**，只能从 checkpoint 反推
    （`list_checkpoint_threads`），代价是恢复出来的是**空壳会话**（`event_count` 为 0）
    ——`api/app.py` 的启动横幅与 `SessionList.history_available` 会明确提示这件事。
 2. **状态怎么推**：`SessionStatus` / `_pending_approval` / `_result` / `_error` 全都只在
@@ -106,9 +106,9 @@ def derive_status(
 
     | checkpoint 的形状 | 恢复成 | 依据 |
     |---|---|---|
-    | 有 interrupt | `AWAITING_APPROVAL` | 停在审批点的会话 checkpoint 是**完整**的，跨进程 `Command(resume=...)` 可以续（决定⑥） |
-    | 有未执行节点，或 state 还写着 `running` | `INTERRUPTED` | 进程被杀时正在跑：**恢复成 running 会永久卡死**，所以标成只读的「已中断」（决定②） |
-    | 其余（`finished`/`error`/压根没 checkpoint） | `IDLE` | 能看 + 能续跑（决定③） |
+    | 有 interrupt | `AWAITING_APPROVAL` | 停在审批点的会话 checkpoint 是**完整**的，跨进程 `Command(resume=...)` 可以续 |
+    | 有未执行节点，或 state 还写着 `running` | `INTERRUPTED` | 进程被杀时正在跑：**恢复成 running 会永久卡死**，所以标成只读的「已中断」 |
+    | 其余（`finished`/`error`/压根没 checkpoint） | `IDLE` | 能看 + 能续跑 |
 
     ⚠️ 判序不能反：停在审批点的会话同样满足「有未执行节点」和「state 写着 running」
     （interrupt 就在 tools 节点里抛出），所以 `has_interrupts` 必须**先判**。
@@ -150,7 +150,7 @@ def _no_runner(settings: Settings, ws: Any) -> None:
 
     探针只读状态、从不执行工具，所以绝不能给它造一个 `DockerCommandRunner` ——
     它的 `__init__` 会 `atexit.register` 一个绑定方法，多造一个就多泄漏一个对象
-    （关键坑 #47）。
+    （`atexit` 的强引用会让它永不回收）。
     """
     return None
 
@@ -179,8 +179,8 @@ class SessionCatalog:
 
         self._stack: ExitStack | None = ExitStack()
         # **传进来的是调用方的资产**（与 build_runtime 的所有权表一致）：sqlite 后端
-        # 必须传全进程共享的那一个 `SqliteSaver`（再建一个指向同一文件会各持一把锁，
-        # 关键坑 #46）；postgres 后端调用方给 None，这里在共享池上自建一个
+        # 必须传全进程共享的那一个 `SqliteSaver`（再建一个指向同一文件会各持一把锁）；
+        # postgres 后端调用方给 None，这里在共享池上自建一个
         # `PostgresSaver(pool)`（实例成本为零，且 `delete_thread` 需要它）。
         if checkpointer is None:
             checkpointer = self._stack.enter_context(
@@ -208,7 +208,7 @@ class SessionCatalog:
 
     @property
     def history_available(self) -> bool:
-        """能不能回放**事件流**（决定④的提示依据）。
+        """能不能回放**事件流**（启动横幅与列表能力位的依据）。
 
         sqlite 后端下事件只在进程内存里，重启即丢 —— 会话能列出来（从 checkpoint 反推），
         但点进去只有空时间线。这个区别必须让用户看见，不能假装一样。

@@ -53,7 +53,7 @@ def _env_sandbox_mode() -> str:
     而在 pytest 里 root logger 上永远挂着 `_pytest.logging` 的两个 `LogCaptureHandler`
     → `Logger.callHandlers` 的 `found > 0` → **`logging.lastResort` 那条「未配置时自动打
     stderr」的后路在 pytest 下根本不可达**，warning 只会进 `--- Captured log call ---`。
-    详见 `config/logging_setup.py` 的模块 docstring 与 CLAUDE.md 关键坑 #65。
+    详见 `config/logging_setup.py` 的模块 docstring。
     """
     raw = (os.getenv("SANDBOX_MODE") or "local").strip().lower()
     if raw not in ("local", "docker"):

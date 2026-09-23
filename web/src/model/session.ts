@@ -3,7 +3,7 @@
  *
  * `SessionStatus` 五态的真源是 `runtime/session.py` 的状态机。**忙闲判定必须只看
  * 这两个状态字段**，绝不能看「worker 线程还活着吗」—— LangGraph 会**静默吞掉**
- * 挂起中的 interrupt（CLAUDE.md 关键坑 #31）：挂起时再 invoke 一次不报错、`next`
+ * 挂起中的 interrupt：挂起时再 invoke 一次不报错、`next`
  * 清空、`interrupts` 归零、委派被丢弃且全程无异常。后端为此专门有回归测试。
  *
  * P9 加的第五态 `interrupted` **刻意不属于 `isBusy`**：它一点都不忙（worker 线程早
@@ -42,7 +42,7 @@ export function isTerminal(status: SessionStatus): boolean {
  * 重启前被中断（只读历史）。
  *
  * 与 `closed` 的区别是**它本可以继续**：库里那份 checkpoint 是好端端的，只是当时
- * 正在跑的 worker 线程随进程一起没了，而「跑到一半」的状态接不回来（P9 决定 ②）。
+ * 正在跑的 worker 线程随进程一起没了，而「跑到一半」的状态接不回来。
  */
 export function isInterrupted(status: SessionStatus): boolean {
   return status === "interrupted";

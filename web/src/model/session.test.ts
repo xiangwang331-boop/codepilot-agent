@@ -2,7 +2,7 @@
  * 会话状态判定 / 轮询节奏 / 首屏选中。
  *
  * 这一层看着琐碎，但 `isBusy` 是**唯一**决定「能不能下发指令 / 该不该显示批准按钮」的
- * 判据。CLAUDE.md 关键坑 #31：LangGraph 会静默吞掉挂起中的 interrupt，所以后端**绝不能**
+ * 判据。LangGraph 会静默吞掉挂起中的 interrupt，所以后端**绝不能**
  * 靠「worker 线程是否活着」判忙，前端同理 —— 只能看 `status` 字段。
  */
 import { describe, expect, it } from "vitest";

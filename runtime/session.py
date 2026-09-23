@@ -458,7 +458,7 @@ class Session:
         resolved = normalize_answer(answer)
         self._publish_status()
         self._start_worker(Command(resume=resolved), announce=False)
-        # 记归一化**之后**的值：`Command(resume=True)` 会被静默当成拒绝（关键坑 #32），
+        # 记归一化**之后**的值：`Command(resume=True)` 会被静默当成拒绝，
         # 日志里看见的必须是真的送进图的那个字符串，而不是调用方传来的形状。
         logger.info("审批 %s: %s", self.thread_id, resolved)
         return True

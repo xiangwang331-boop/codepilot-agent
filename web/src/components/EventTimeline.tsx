@@ -17,7 +17,7 @@ export function EventTimeline({
 }: {
   blocks: Block[];
   filters: FilterState;
-  /** false（sqlite 后端）时空时间线要说清「不是没跑过，是没落库」（P9 决定 ④）。 */
+  /** false（sqlite 后端）时空时间线要说清「不是没跑过，是没落库」。 */
   historyAvailable: boolean;
 }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement | null>(null);

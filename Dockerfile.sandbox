@@ -3,7 +3,7 @@
 #
 # 只隔离"执行"：容器内只有 Python + pytest；host workspace 经 bind mount 挂成
 # /workspace 供读写。容器内非挂载层（pip 装的其他包）随 rm -f 销毁、不跨会话。
-# 这是运行隔离，不是恶意代码安全边界（root、未 cap-drop / network none）——见 DESIGN.md。
+# 这是运行隔离，不是恶意代码安全边界（root、未 cap-drop / network none）。
 FROM python:3.12-slim
 
 RUN pip install --no-cache-dir pytest==7.4.4

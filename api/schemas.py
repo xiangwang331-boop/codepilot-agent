@@ -58,7 +58,7 @@ class SessionList(BaseModel):
 
     `history_available` 是**列表级**能力位，不是每个会话的属性：它说的是
     「这个进程读不读得到历史事件流」（postgres=true / sqlite=false），
-    前端据此出横幅说明「点进去为什么时间线是空的」（决定④）。
+    前端据此出横幅说明「点进去为什么时间线是空的」。
     """
 
     sessions: list[SessionInfo]

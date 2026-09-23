@@ -58,8 +58,8 @@ stderr」就得给它单独挂一对 handler，规则从一条变两条 —— �
   它也因此只调 `Handler.__init__` 而**不**调 `StreamHandler.__init__`）。
 - **幂等**。一个 pytest 进程里 `create_app` 会被真实实例化 ~59 次，且多个用例用同一个
   `tmp_path` 连起 2–4 次。重复 `addHandler` 会让同一条告警写 N 遍。
-- **绝不抛异常**。沿用 `persistence/event_store.py` 的 `record()` 契约（关键坑 #23
-  「可观测性不该杀死正在跑的任务」）与 `sweep_orphan_containers` 的「绝不挡启动」。
+- **绝不抛异常**。沿用 `persistence/event_store.py` 的 `record()` 契约（「可观测性
+  不该杀死正在跑的任务」）与 `sweep_orphan_containers` 的「绝不挡启动」。
 """
 from __future__ import annotations
 

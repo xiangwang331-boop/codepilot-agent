@@ -150,7 +150,7 @@ def test_build_pool_connection_kwargs_match_saver_contract(monkeypatch, tmp_path
     """池化版的「autocommit 必须为 True」。
 
     漏 autocommit → INSERT 停在隐式事务、连接归还池时既不提交也不报错 → **事件静默全丢**
-    （P6 关键坑 #22 在池化后原样复现）。row_factory 缺了 → row["type"] 报 tuple indices。
+    （池化后原样复现，最难查的一类 bug）。row_factory 缺了 → row["type"] 报 tuple indices。
     """
     pools, _ = _patch_pool(monkeypatch)
     build_pool(_settings(tmp_path, database_url=_PG_URL))

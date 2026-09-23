@@ -290,7 +290,7 @@ def _announce(settings: Settings, registry: SessionRegistry, restored: int) -> N
         if settings.sandbox_mode == "docker"
         else "local（run_command 跑在本机）"
     )
-    # 恢复历史这一行必须把**能力差异**说透（决定④）：sqlite 下会话能列出来，但点进去
+    # 恢复历史这一行必须把**能力差异**说透：sqlite 下会话能列出来，但点进去
     # 没有事件流；用户看到的空时间线是他的历史真的没了，不是界面 bug。
     if registry.history_available:
         history = f"已恢复 {restored} 个（事件流可跨重启回放）"

@@ -17,7 +17,7 @@ export interface SessionsState {
   /** 首次拉取是否已完成。空列表和「还没拉到」是两回事，UI 得能区分。 */
   loaded: boolean;
   /**
-   * 事件流能不能跨重启回放（`SessionList.history_available`，P9 决定 ④）。
+   * 事件流能不能跨重启回放（`SessionList.history_available`）。
    *
    * 初值 `true` 是**刻意的乐观默认**：它只在 postgres 下为 false，而真为 false 时
    * 第一次拉取（毫秒级）就会把它翻过来。默认 false 会让 postgres 用户先看到一条

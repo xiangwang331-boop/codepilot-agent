@@ -107,7 +107,7 @@ def list_sessions(registry: Registry) -> SessionList:
     """列出全部会话：本进程活动过的在前，重启恢复的历史记录接在后。
 
     两段各自「最近活动在前」而不是混排——两段的时钟不可比（见 `registry.snapshots`）。
-    `history_available=false` 时前端必须提示「有会话但没有事件流」（决定④）。
+    `history_available=false` 时前端必须提示「有会话但没有事件流」。
     """
     return SessionList(
         sessions=[SessionInfo(**s) for s in registry.snapshots()],
@@ -128,7 +128,7 @@ def delete_session(thread_id: str, registry: Registry) -> Response:
     （回收线程则相反：它只碰 `idle`/`awaiting_approval`/`interrupted`，因为用户并不知道它在动）。
     代价是正在跑的那条命令会以「容器没了」的 ERROR 收场，结果被丢弃。
 
-    P9 起「移除」必须是**真删**（决定⑤）：目录改成从库里读之后，只摘内存会让删掉的
+    P9 起「移除」必须是**真删**：目录改成从库里读之后，只摘内存会让删掉的
     会话重启后复活——比不能删更糟。所以删库失败**不能**返回 204，那是在骗用户
     （他下次重启会看到它回来，而这一次的 204 让他以为删干净了）。
     """
@@ -204,7 +204,7 @@ def get_events(
     `catalog.load_events()` 已把整段历史按序灌进 `Session._events`，所以这里读到的
     下标即 seq、从 0 起连续，框架期完全没变。sqlite 后端的事件仍在进程内存里
     （重启即丢），此时 `list_sessions` 的 `history_available=false` 会让前端明说
-    这件事——**不能假装一样**（决定④）。
+    这件事——**不能假装一样**。
 
     `since` 的语义仍是 `seq >= since`（闭区间），所以断线重连要传
     `<最后收到的 seq> + 1`，传 lastSeq 会重复收到最后一条。

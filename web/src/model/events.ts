@@ -213,7 +213,7 @@ export function buildTimeline(items: TimelineEvent[]): Block[] {
    * 判重键 → 由它开出来的那个块。
    *
    * **只跟「当前打开的块」比较是不够的**：一批里有两个 `delegate` tool_call 时
-   * （CLAUDE.md 关键坑 #40，`snap.interrupts` 会连续多轮出现），第三轮重跑会重新发出
+   * （`snap.interrupts` 会连续多轮出现），第三轮重跑会重新发出
    * **第一个** delegate 的 `ToolCallStarted` —— 而此时当前块早就是第二个的了，
    * 于是第一个委派会被重复开成第二张卡（一张卡变两张，内容还是错的）。
    *

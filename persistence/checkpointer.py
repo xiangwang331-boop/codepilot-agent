@@ -114,7 +114,7 @@ def _postgres_checkpointer(
 def list_checkpoint_threads(saver: object, *, limit: int | None = None) -> list[str]:
     """列出 checkpointer 里出现过的 thread_id，**最近活动在前、已去重**（P9）。
 
-    P9 的 **sqlite 降级路径**专用：sqlite 后端事件不落库（只在进程内存，关键坑 #46），
+    P9 的 **sqlite 降级路径**专用：sqlite 后端事件不落库（只在进程内存），
     所以「重启后还有哪些会话」只能从 checkpoint 反推——代价是拿不到事件流，
     恢复出来的会话是**空壳**（`event_count` 为 0）。postgres 走事件表，不用这个。
 
@@ -132,7 +132,7 @@ def list_checkpoint_threads(saver: object, *, limit: int | None = None) -> list[
     kwargs = {"limit": limit} if limit is not None else {}
     # ⚠️ 必须**整个抽干**，不能提前 break：两家的 list() 都把 `yield` 放在
     # `with self.cursor()` 块内，挂起的生成器会把 sqlite 的那把锁一直占着
-    # → 后续 put 报 `database is locked`（关键坑 #46）。
+    # → 后续 put 报 `database is locked`。
     for tup in saver.list(None, **kwargs):  # type: ignore[attr-defined]
         configurable = (getattr(tup, "config", None) or {}).get("configurable") or {}
         # 只认根图：`config=None` 时 list() **不过滤 checkpoint_ns**，子图命名空间的
