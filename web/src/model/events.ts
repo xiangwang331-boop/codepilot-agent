@@ -6,22 +6,27 @@
  * 一次「委派 coder + 审批挂起 + 批准」的真实序列：
  *
  * ```
- *  0  AgentStarted     Supervisor  message=""                      session.py:427（仅首轮）
- *  1  AgentStep        Supervisor  "决定调用 1 个工具: delegate"     core.py:85
- *  2  ToolCallStarted  Supervisor  "delegate"  detail={args}       core.py:119
+ *  0  UserMessage      User        message=需求全文  step=null       session.py:550（图外）
+ *  1  AgentStarted     Supervisor  message=""                      session.py:552（仅首轮）
+ *  2  AgentStep        Supervisor  "决定调用 1 个工具: delegate"     core.py:85
+ *  3  ToolCallStarted  Supervisor  "delegate"  detail={args}       core.py:119
  *     ── interrupt() 在这里抛出 ────────────────────────────────── supervisor.py:84
  *     [人批准 → POST /approval → Command(resume="yes") → 新 worker 线程]
- *  3  ToolCallStarted  Supervisor  "delegate"  ← 与 seq 2 **逐字相同**（tools 节点整段重跑）
- *  4  AgentStarted     coder       message=""                      supervisor.py:113  ← 只此一次
- *  5  AgentStep        coder       "决定调用 1 个工具: write_file"  core.py:85
- *  6  ToolCallStarted  coder       "write_file" detail={args}      core.py:119
- *  7  ToolCallCompleted coder      "write_file(path='…')"          core.py:130（**无 detail**）
- *  8  AgentStep        coder       "给出最终回答"                   core.py:93
- *  9  AgentCompleted   coder       message=text[:80]               supervisor.py:123
- * 10  ToolCallCompleted Supervisor "delegate(specialist='coder'…)" core.py:130
- * 11  AgentStep        Supervisor  "给出最终回答"                   core.py:93
- * 12  AgentCompleted   Supervisor  message=""  step=null           session.py:460（图外）
+ *  4  ToolCallStarted  Supervisor  "delegate"  ← 与 seq 3 **逐字相同**（tools 节点整段重跑）
+ *  5  AgentStarted     coder       message=""                      supervisor.py:113  ← 只此一次
+ *  6  AgentStep        coder       "决定调用 1 个工具: write_file"  core.py:85
+ *  7  ToolCallStarted  coder       "write_file" detail={args}      core.py:119
+ *  8  ToolCallCompleted coder      "write_file(path='…')"          core.py:130（**无 detail**）
+ *  9  AgentStep        coder       "给出最终回答"                   core.py:93
+ * 10  AgentCompleted   coder       message=text[:80]               supervisor.py:123
+ * 11  ToolCallCompleted Supervisor "delegate(specialist='coder'…)" core.py:130
+ * 12  AgentStep        Supervisor  "给出最终回答"                   core.py:93
+ * 13  AgentCompleted   Supervisor  message=""  step=null           session.py:460（图外）
  * ```
+ *
+ * `seq 0` 是**每轮指令各一条**（追加指令走同一条路径，`resume` 不发），所以「第 N 轮
+ * 让我干了什么」在时间线上逐条对得上；它 `agent` 恒为 `"User"`，因此永远不会被
+ * 折进任何委派块（`scopeFor` 比的是 `event.agent === group.specialist`）。
  *
  * ## 由这张表推出的四条算法约束（每一条都踩过或差点踩到）
  *
@@ -66,9 +71,15 @@ export interface ToolRow {
   message: string;
 }
 
-/** 不属于任何委派块的零散事件：根生命周期、AgentStep、Token、Condense、失败。 */
+/**
+ * 不属于任何委派块的零散事件：根生命周期、AgentStep、Token、Condense、失败、
+ * **用户指令**。
+ *
+ * `user` 单独立一种 kind（而不是并进 `step`）：它的渲染、配色、过滤语义都不同 ——
+ * 需求全文要 `pre-wrap` 展开（不是短句摘要），也不属于任何 agent 的「步骤」。
+ */
 export interface SimpleBlock {
-  kind: "lifecycle" | "step" | "token" | "condense" | "failure";
+  kind: "lifecycle" | "step" | "user" | "token" | "condense" | "failure";
   id: string;
   item: TimelineEvent;
 }
@@ -161,6 +172,39 @@ export function hasFailure(blocks: Block[]): boolean {
   });
 }
 
+/**
+ * 一个块列表**一共会渲染多少行**（委派块的子块递归计入）。
+ *
+ * 这是时间线角标「N 条新事件」的计数依据，也是「贴底时要不要跟着滚」的判据。
+ * 两个「顺手的写法」都试过、都不行：
+ *
+ * - **顶层的 `blocks.length` 不行**：委派的子事件是在**同一个块里继续长**的，
+ *   整段子任务执行期间顶层长度纹丝不动 —— 而「回答很长、要往下翻」恰恰就是要提示的场景。
+ * - **原始事件条数不行**：一条事件可能根本不渲染（子 agent 的 AgentStarted 只更新计数、
+ *   不发新行），而有的块由两条事件合成（工具行 = Started + Completed）。角标要能对上
+ *   用户「往下翻会看到几行新东西」的预期，所以数的是**块**，不是事件。
+ *
+ * ⚠️ 数的是**已经过完滤**的块：过滤条件决定「看什么」，角标只说「新来了几行」，
+ * 两者叠加才是用户看到的东西。所以调用方传的必须是过滤后的列表。
+ *
+ * ⚠️ 也**不是**「屏幕上此刻有几行」：委派卡收起时子块不渲染（`DelegationCard` 的
+ * `{open && …}`），而这里照样把它们数进去。这是有意的 —— 新子块**只会在展开的卡片里
+ * 长出来**（默认展开、且正在执行的那张不会被用户收起），所以角标恰好在它该准的场合准，
+ * 而在「手动收起了几张旧卡再往下翻」这种无关场合偏高个位数。想让两处严格一致就得让
+ * 展开态参与计数，那会把 `open` 从组件内部状态提升成时间线的输入 —— 为这点偏差不值。
+ *
+ * ⚠️ 这个数**可能变小**：重跑会把委派块里已执行过的子块清空重填（见 `buildTimeline`
+ * 的 reopen 分支）。调用方按「增量只累加正数」处理，别拿它当单调计数器。
+ */
+export function countBlocks(blocks: Block[]): number {
+  let n = 0;
+  for (const block of blocks) {
+    n += 1;
+    if (block.kind === "delegation") n += countBlocks(block.blocks);
+  }
+  return n;
+}
+
 /** 一个块里涉及到的所有 agent（含后代），给过滤器用。 */
 export function blockAgents(block: Block): string[] {
   switch (block.kind) {
@@ -170,6 +214,7 @@ export function blockAgents(block: Block): string[] {
       return [block.specialist, ...block.blocks.flatMap(blockAgents)];
     case "lifecycle":
     case "step":
+    case "user":
     case "token":
     case "condense":
     case "failure":
@@ -184,6 +229,8 @@ function simpleKind(event: AgentEvent): SimpleBlock["kind"] {
       return "lifecycle";
     case "AgentStep":
       return "step";
+    case "UserMessage":
+      return "user";
     case "TokenUsage":
       return "token";
     case "Condense":

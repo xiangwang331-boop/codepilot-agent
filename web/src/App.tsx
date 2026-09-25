@@ -182,7 +182,15 @@ export default function App(): React.JSX.Element {
       );
     }
     return (
-      <EventTimeline blocks={blocks} filters={filters} historyAvailable={historyAvailable} />
+      <EventTimeline
+        // 换会话就换一棵树：`atBottom` 与「N 条新事件」的账都是按**当前这棵**时间线算的，
+        // 不 remount 的话滚动位置会残留到新会话上（`scrollTop` 被新内容夹住、`atBottom`
+        // 停在 false），于是新会话一打开就顶着上一个会话的未读行数。
+        key={selected}
+        blocks={blocks}
+        filters={filters}
+        historyAvailable={historyAvailable}
+      />
     );
   };
 

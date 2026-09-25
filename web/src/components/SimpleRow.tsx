@@ -1,10 +1,12 @@
 import { useState } from "react";
 
 import { AgentBadge, RerunTag, Time } from "./Badges";
+import { agentSlug } from "../model/agent";
 import { condenseDetail, type SimpleBlock } from "../model/events";
 
 /**
- * 不属于任何委派块的零散事件行：根生命周期、AgentStep、TokenUsage、Condense、失败。
+ * 不属于任何委派块的零散事件行：根生命周期、AgentStep、**用户指令**、TokenUsage、
+ * Condense、失败。
  *
  * `AgentStarted` / `AgentCompleted` 的 **message 是空串**（`session.py:427/460` 与
  * `supervisor.py:113` 都发空串），所以按事件类型给文案，**不能直接渲染 message**
@@ -25,7 +27,11 @@ export function SimpleRow({ block }: { block: SimpleBlock }): React.JSX.Element 
   })();
 
   return (
-    <div className="simple" data-kind={block.kind} data-agent={event.agent}>
+    // `data-agent` 必须走 `agentSlug`：`event.agent` 是**原始大小写**（"Supervisor" /
+    // "User"），而 tokens.css 的色相选择器全是小写 —— 直接传原始值会一个都匹配不上，
+    // `--agent-hue` 静默退化成兜底灰（下面 `.simple[data-kind="user"]` 用的就是它）。
+    // `AgentBadge` 内部本来就走 slug，所以这里错了也只有容器受影响、徽章是好的。
+    <div className="simple" data-kind={block.kind} data-agent={agentSlug(event.agent)}>
       <AgentBadge agent={event.agent} />
       <div className="simple__msg">
         {label}

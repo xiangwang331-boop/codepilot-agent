@@ -15,6 +15,7 @@ import {
   applyFilters,
   buildTimeline,
   collectAgents,
+  countBlocks,
   DEFAULT_FILTERS,
   eventToolName,
   hasFailure,
@@ -86,14 +87,25 @@ describe("对真实夹具折叠（批准路径）", () => {
   const blocks = buildTimeline(timeline);
   const delegation = blocks.find((b) => b.kind === "delegation") as DelegationBlock;
 
-  it("根层块数与顺序：生命周期 → step → 委派 → step → 生命周期", () => {
+  it("根层块数与顺序：**用户指令** → 生命周期 → step → 委派 → step → 生命周期", () => {
     expect(blocks.map((b) => b.kind)).toEqual([
+      "user",
       "lifecycle",
       "step",
       "delegation",
       "step",
       "lifecycle",
     ]);
+  });
+
+  it("seq 0 的用户指令折成 `user` 块，整段原文就在 `message` 里", () => {
+    const first = blocks[0] as SimpleBlock;
+    expect(first.kind).toBe("user");
+    expect(first.item.seq).toBe(0);
+    expect(first.item.event.agent).toBe("User");
+    expect(first.item.event.message).toBe(FIXTURE_TASK);
+    // 图外事件 → 不参与判重（与根 AgentStarted 同理）
+    expect(first.item.isRerun).toBe(false);
   });
 
   it("委派块把 specialist 与 task 从 detail.args 里读出来了", () => {
@@ -108,7 +120,7 @@ describe("对真实夹具折叠（批准路径）", () => {
 
   it("块以 completed 收口，closedSeq 指向 delegate 的收口事件", () => {
     expect(delegation.state).toBe("completed");
-    expect(delegation.closedSeq).toBe(10);
+    expect(delegation.closedSeq).toBe(11);
     expect(delegation.childRuns).toBe(1);
   });
 
@@ -130,13 +142,14 @@ describe("对真实夹具折叠（批准路径）", () => {
   });
 
   it("根 AgentStarted 的 message 是空串，但块照样在（渲染层负责不显示空行）", () => {
-    const first = blocks[0];
-    expect(first?.kind).toBe("lifecycle");
-    if (first?.kind !== "lifecycle") throw new Error("形状不对");
-    expect(first.item.event.type).toBe("AgentStarted");
-    expect(first.item.event.message).toBe("");
+    // 索引 1 而不是 0：seq 0 那条是用户指令（`user` 块），AgentStarted 排在它后面。
+    const second = blocks[1];
+    expect(second?.kind).toBe("lifecycle");
+    if (second?.kind !== "lifecycle") throw new Error("形状不对");
+    expect(second.item.event.type).toBe("AgentStarted");
+    expect(second.item.event.message).toBe("");
     // 图外事件（step=null）不参与判重
-    expect(first.item.isRerun).toBe(false);
+    expect(second.item.isRerun).toBe(false);
   });
 
   it("根 AgentCompleted 是图外事件（step=null），final 回答不在 message 里", () => {
@@ -200,7 +213,7 @@ describe("对真实夹具折叠（一批两个委派）", () => {
 
   it("重放不会把子事件叠成两份：每张卡里只有一轮的内容", () => {
     // a.py 在外层确实跑了两次（两轮各一次），但卡里只留**最后一次重跑**填的内容
-    // —— 4 条（step / tool / step / …）而不是 8 条。
+    // —— 3 行（step / write_file 行 / step）而不是 6 行。
     const a = delegations[0] as DelegationBlock;
     expect(a.childRuns).toBe(1);
     expect(a.blocks.filter((b) => b.kind === "tool")).toHaveLength(1);
@@ -541,6 +554,79 @@ describe("过滤", () => {
 
   it("collectAgents 去重、保序，根与 specialist 都在", () => {
     expect(collectAgents(blocks)).toEqual(["supervisor", "coder"]);
+  });
+});
+
+// ---------------------------------------------------------------- 计数（时间线角标）
+
+describe("countBlocks（「N 条新事件 ↓」的计数依据）", () => {
+  /** 一张卡 + 卡里 3 行（step / write_file 行 / step）—— 子 agent 的 Started/Completed 不占行。 */
+  const oneCard = (): AgentEvent[] => [
+    delegateStart("coder", "写"),
+    ev("AgentStarted", "coder", "", { step: 2, node: "tools" }),
+    ev("AgentStep", "coder", "决定调用 1 个工具: write_file", { step: 2, node: "tools" }),
+    ev("ToolCallStarted", "coder", "write_file", {
+      step: 2,
+      node: "tools",
+      detail: { args: { path: "m.py" } },
+    }),
+    ev("ToolCallCompleted", "coder", "write_file(path='m.py')", { step: 2, node: "tools" }),
+    ev("AgentCompleted", "coder", "好了", { step: 2, node: "tools" }),
+    ev("AgentStep", "coder", "给出最终回答", { step: 2, node: "tools" }),
+  ];
+
+  it("委派的子行递归计入 —— 顶层只有 1 个块，渲染出来是 4 行", () => {
+    // ⛔ 这条就是不能拿 `blocks.length` 当计数的理由：整段子任务执行期间它恒为 1，
+    // 而「回答很长、要往下翻」恰恰是角标唯一需要出现的场景。
+    const blocks = fresh(() => fold(oneCard()));
+    expect(blocks).toHaveLength(1);
+    expect(countBlocks(blocks)).toBe(4);
+  });
+
+  it("数的是**行**不是**事件**：7 条事件（其中 Started/Completed 不占行、Completed 与开行配对）落成 4 行", () => {
+    expect(oneCard()).toHaveLength(7);
+    expect(countBlocks(fresh(() => fold(oneCard())))).toBe(4);
+  });
+
+  it("真实夹具：批准路径 6 个顶层块 + 卡里 3 行 = 9", () => {
+    expect(countBlocks(buildTimeline(markReruns(APPROVED)))).toBe(9);
+  });
+
+  it("真实夹具：拒绝路径的卡是空的（childRuns === 0）→ 计数正好等于顶层块数", () => {
+    const blocks = buildTimeline(markReruns(REJECTED));
+    expect(countBlocks(blocks)).toBe(blocks.length);
+  });
+
+  it("真实夹具：一批两个委派（根 7 个块 + 两张卡里的各 3 行 = 13）", () => {
+    const blocks = buildTimeline(markReruns(BATCH));
+    const cards = blocks.filter((b) => b.kind === "delegation") as DelegationBlock[];
+    expect(blocks).toHaveLength(7);
+    expect(cards.map((d) => d.blocks.length)).toEqual([3, 3]);
+    expect(countBlocks(blocks)).toBe(13); // 7 + 3 + 3
+  });
+
+  it("数的是**过完滤**的列表：按 agent 过滤后只算留下来的行", () => {
+    const blocks = buildTimeline(markReruns(APPROVED));
+    const visible = applyFilters(blocks, { ...DEFAULT_FILTERS, agent: "coder" });
+    expect(visible.map((b) => b.kind)).toEqual(["delegation"]);
+    expect(countBlocks(visible)).toBe(4); // 卡 + 卡里 3 行；根那 3 行是 Supervisor 的被滤掉了
+  });
+
+  it("**可能变小**：重跑把卡里清空重填，所以调用方只能累加正增量", () => {
+    const events = oneCard();
+    expect(countBlocks(fresh(() => fold(events)))).toBe(4);
+
+    // 第二轮：逐字重发那条开块事件（判重键命中 → 复用成 attempts++ 且**卡里清空**），
+    // 而这一轮的子事件还没到。
+    const rerun = fresh(() => fold([...events, delegateStart("coder", "写")]));
+    const card = rerun[0] as DelegationBlock;
+    expect(card.attempts).toBe(2);
+    expect(card.blocks).toHaveLength(0);
+    expect(countBlocks(rerun)).toBe(1); // 4 → 1
+  });
+
+  it("空列表是 0（没折叠过任何东西）", () => {
+    expect(countBlocks([])).toBe(0);
   });
 });
 

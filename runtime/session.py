@@ -437,7 +437,7 @@ class Session:
             raise
 
         self._publish_status()
-        self._start_worker(graph_input, announce=announce)
+        self._start_worker(graph_input, announce=announce, task=task)
         # 任务正文只截前 80 字：日志是「动作级」的，需求全文由事件流承载
         logger.info("下发指令 %s: %s", self.thread_id, _ellipsis(task))
         return True
@@ -512,16 +512,23 @@ class Session:
             return self._rt.initial_input(task), True
         return self._rt.append_input(task), False
 
-    def _start_worker(self, graph_input: Any, *, announce: bool) -> None:
+    def _start_worker(
+        self, graph_input: Any, *, announce: bool, task: str | None = None
+    ) -> None:
         """起一个 worker 线程跑任务。**所有线程绑定都收敛在这里。**
 
         `bind_thread` / `bind_emitter` 是线程上下文作用域（不是会话作用域），
         审批恢复后新起的线程必须重新绑，否则它的图内 emit 会掉回模块单例 ——
         会话订阅者再也收不到任何事件，且**没有任何报错**。
+
+        `task` 只在下发指令时传（`resume` 传 None）：它要在事件流里留下
+        `USER_MESSAGE` 那条「用户说了什么」。**在这条线程里发而不是在 `begin()` 里发**，
+        是因为只有这里绑过 `bind_thread` —— 在 event loop 线程发的话 `Event.thread_id`
+        是空串，事件会落进一个谁的目录都查不到的桶里（`event_row` 直接取 `thread_id`）。
         """
         t = threading.Thread(
             target=self._run,
-            args=(graph_input, announce),
+            args=(graph_input, announce, task),
             name=f"codepilot-session-{self.thread_id[:8]}",
             daemon=True,
         )
@@ -529,12 +536,18 @@ class Session:
             self._worker = t
         t.start()
 
-    def _run(self, graph_input: Any, announce: bool) -> None:
+    def _run(self, graph_input: Any, announce: bool, task: str | None = None) -> None:
         rt = self._rt
         if rt is None:  # 起线程与 close() 之间的竞态：直接收工
             return
         bind_thread(self.thread_id)
         bind_emitter(self.emitter)
+        # 用户指令排在**本轮一切 agent 事件之前**（含 announce 的 AGENT_STARTED）：
+        # 它是这一轮的前置语境，而不是某个 agent 说过的话。追加指令走同一条路径
+        # （`announce=False` 也照样发），所以「第 N 轮到底让我干了什么」在时间线上
+        # 逐条对得上；只有 `resume` 不发 —— 那是审批，不是新需求。
+        if task is not None:
+            self.emitter.emit(EventType.USER_MESSAGE, agent="User", message=task)
         if announce:
             self.emitter.emit(EventType.AGENT_STARTED, agent="Supervisor", message="")
         try:

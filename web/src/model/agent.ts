@@ -6,8 +6,11 @@
  *     与 `runtime/assembly.py`）
  *   - specialist 是小写 `spec.name`（`agent/specialists.py` 的注册表键：
  *     `analyst` / `planner` / `coder` / `debugger` / `tester` / `reviewer`）
+ *   - 用户下发的指令是 **`"User"`**（`runtime/session.py` 的 `UserMessage` 事件）
  *
  * 所以 CSS 的 `[data-agent="coder"]` 要用 slug，过滤器的比较也要小写化。
+ * ⚠️ `"User"` **必须是 ASCII**：`agentSlug` 的正则是 `[^a-z0-9]+ → "-"`，写「用户」
+ * 会被清成空串 —— `data-agent=""` 匹配不上任何色相，徽章和过滤都会静默退化成兜底灰。
  */
 
 /** 归一化成 CSS 属性安全、比较安全的 slug。`"Supervisor"` → `"supervisor"`。 */
@@ -27,6 +30,7 @@ const LABELS: Record<string, string> = {
   debugger: "Debugger",
   tester: "Tester",
   reviewer: "Reviewer",
+  user: "你",
 };
 
 /** 显示名。未注册的 agent 原样返回（注册表加新角色不该让界面崩）。 */
@@ -44,6 +48,7 @@ const ROLES: Record<string, string> = {
   debugger: "定位问题（只读 + 诊断命令）",
   tester: "跑测试验证",
   reviewer: "代码审查",
+  user: "你下发给 Supervisor 的开发需求",
 };
 
 export function agentRole(agent: string): string {

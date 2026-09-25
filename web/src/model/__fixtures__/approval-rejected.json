@@ -5,9 +5,9 @@
       "kind": "event",
       "seq": 0,
       "event": {
-        "type": "AgentStarted",
-        "agent": "Supervisor",
-        "message": "",
+        "type": "UserMessage",
+        "agent": "User",
+        "message": "写一个 quicksort 到 main.py",
         "detail": null,
         "timestamp": "2026-01-01T00:00:00+00:00",
         "thread_id": "<thread>",
@@ -19,33 +19,28 @@
       "kind": "event",
       "seq": 1,
       "event": {
-        "type": "AgentStep",
+        "type": "AgentStarted",
         "agent": "Supervisor",
-        "message": "决定调用 1 个工具: delegate",
+        "message": "",
         "detail": null,
         "timestamp": "2026-01-01T00:00:01+00:00",
         "thread_id": "<thread>",
-        "step": 1,
-        "node": "agent"
+        "step": null,
+        "node": null
       }
     },
     {
       "kind": "event",
       "seq": 2,
       "event": {
-        "type": "ToolCallStarted",
+        "type": "AgentStep",
         "agent": "Supervisor",
-        "message": "delegate",
-        "detail": {
-          "args": {
-            "specialist": "coder",
-            "task": "写一个 quicksort 到 main.py"
-          }
-        },
+        "message": "决定调用 1 个工具: delegate",
+        "detail": null,
         "timestamp": "2026-01-01T00:00:02+00:00",
         "thread_id": "<thread>",
-        "step": 2,
-        "node": "tools"
+        "step": 1,
+        "node": "agent"
       }
     },
     {
@@ -71,10 +66,15 @@
       "kind": "event",
       "seq": 4,
       "event": {
-        "type": "ToolCallCompleted",
+        "type": "ToolCallStarted",
         "agent": "Supervisor",
-        "message": "delegate(specialist='coder', task='写一个 quicksort 到 main.py')",
-        "detail": null,
+        "message": "delegate",
+        "detail": {
+          "args": {
+            "specialist": "coder",
+            "task": "写一个 quicksort 到 main.py"
+          }
+        },
         "timestamp": "2026-01-01T00:00:04+00:00",
         "thread_id": "<thread>",
         "step": 2,
@@ -85,11 +85,25 @@
       "kind": "event",
       "seq": 5,
       "event": {
+        "type": "ToolCallCompleted",
+        "agent": "Supervisor",
+        "message": "delegate(specialist='coder', task='写一个 quicksort 到 main.py')",
+        "detail": null,
+        "timestamp": "2026-01-01T00:00:05+00:00",
+        "thread_id": "<thread>",
+        "step": 2,
+        "node": "tools"
+      }
+    },
+    {
+      "kind": "event",
+      "seq": 6,
+      "event": {
         "type": "AgentStep",
         "agent": "Supervisor",
         "message": "给出最终回答",
         "detail": null,
-        "timestamp": "2026-01-01T00:00:05+00:00",
+        "timestamp": "2026-01-01T00:00:06+00:00",
         "thread_id": "<thread>",
         "step": 4,
         "node": "agent"
@@ -97,13 +111,13 @@
     },
     {
       "kind": "event",
-      "seq": 6,
+      "seq": 7,
       "event": {
         "type": "AgentCompleted",
         "agent": "Supervisor",
         "message": "",
         "detail": null,
-        "timestamp": "2026-01-01T00:00:06+00:00",
+        "timestamp": "2026-01-01T00:00:07+00:00",
         "thread_id": "<thread>",
         "step": null,
         "node": null

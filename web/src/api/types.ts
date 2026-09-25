@@ -4,7 +4,7 @@
  * 逐字对齐的真源（改任何一处都要两边一起改）：
  *   - `api/schemas.py`           SessionInfo / EventEnvelope 的字段名
  *   - `runtime/session.py`       snapshot() / event_payload()
- *   - `events/events.py`         EventType 九个值 + Event 数据类
+ *   - `events/events.py`         EventType 十个值 + Event 数据类
  *   - `api/ws.py`                三种信封信封 kind
  *   - `tests/test_web_ui_contract.py`  钉死上面这些（后端侧）
  *   - `web/src/api/types.test.ts`      钉死这里（前端侧）
@@ -25,7 +25,7 @@
  */
 export type SessionStatus = "idle" | "running" | "awaiting_approval" | "interrupted" | "closed";
 
-/** `events/events.py` 的 EventType 九个值 —— 顺序与枚举一致。 */
+/** `events/events.py` 的 EventType 十个值 —— 顺序与枚举一致。 */
 export type EventType =
   | "AgentStarted"
   | "AgentStep"
@@ -35,7 +35,15 @@ export type EventType =
   | "AgentCompleted"
   | "AgentFailed"
   | "Condense"
-  | "TokenUsage";
+  | "TokenUsage"
+  /**
+   * 用户下发的指令本身（`agent` 恒为 `"User"`，`message` 是需求原文，可多行）。
+   *
+   * **它是图外事件**：由会话层的 worker 在起图之前发（`runtime/session.py` 的
+   * `Session._run`），所以 `step`/`node` 都是 null —— 与根 AgentStarted 同类。
+   * 位置语义上它排在本轮所有 agent 事件之前。
+   */
+  | "UserMessage";
 
 /** `events/events.py` 的 Event（经 `session.event_payload()` 序列化后）。 */
 export interface AgentEvent {

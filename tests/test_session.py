@@ -298,10 +298,16 @@ def test_subscribe_backfills_then_streams_live(tmp_path):
         # seq 连续（不重）+ 条数与会话事件一致（不漏）
         assert [e["seq"] for e in live] == list(range(len(live)))
         assert len(live) == len(s.events)
-        assert live[0]["event"]["type"] == "AgentStarted"
+        # 第一条是**用户自己那句指令**（图外事件，`UserMessage`），Supervisor 的
+        # AgentStarted 跟在它后面 —— 顺序有意义：需求是本轮一切 agent 事件的前置语境。
+        assert live[0]["event"]["type"] == "UserMessage"
+        assert live[0]["event"]["message"] == "写快排"
+        assert live[0]["event"]["step"] is None, "图外事件没有图位置"
+        assert live[1]["event"]["type"] == "AgentStarted"
         assert live[-1]["event"]["type"] == "AgentCompleted"
         # 推的是结构化事件（不是 format_event 的渲染结果）
-        assert live[0]["event"]["agent"] == "Supervisor"
+        assert live[1]["event"]["agent"] == "Supervisor"
+        assert live[0]["event"]["agent"] == "User"
         assert live[0]["event"]["thread_id"] == s.thread_id
 
         # 断线重连：再来一个订阅者，能拿到整段回填

@@ -36,6 +36,9 @@
   --hue-debugger: #f59e0b;
   --hue-tester: #34d399;
   --hue-reviewer: #f472b6;
+  /* 「你」。它不是 agent，但同样需要一条自己的色相 —— 用户指令要在满屏 agent 事件里
+     一眼可辨，靠的就是这个（剩下的黄绿色相，与任何 specialist 都不撞）。 */
+  --hue-user: #a3e635;
   --hue-unknown: #8892a4;
   /* 由 [data-agent] 覆盖；没写 data-agent 的地方拿这个兜底 */
   --agent-hue: var(--hue-unknown);
@@ -59,6 +62,14 @@
   --radius-sm: 5px;
   --rail-w: 248px;
   --inspector-w: 340px;
+
+  /* 滚动条滑块。**必须与 --line 分开** —— 原先滑块的底色直接取 `var(--line)`，
+     而 `--line` 是**分隔线**的颜色，本来就该几乎看不见；拿它去画一个需要被看见的
+     控件，就得到一个画了等于没画的滚动条（实测滑块 #232a35 压在底 #0d1014 上，
+     对比度只有 1.32:1，而 UI 控件的下限是 3:1）。
+     这里按「控件」而不是「分隔线」来配色：静止 3.2:1，悬停 6.1:1。 */
+  --scrollbar-thumb: #5b6577;
+  --scrollbar-thumb-hover: #8892a4;
 
   color-scheme: dark;
 }
@@ -92,7 +103,13 @@
   --hue-debugger: #b45309;
   --hue-tester: #059669;
   --hue-reviewer: #db2777;
+  /* 浅色下同色相要压深，否则白底上没有对比度（同上面那批） */
+  --hue-user: #4d7c0f;
   --hue-unknown: #64748b;
+
+  /* 浅色下反向：底是白的，滑块得够深（#5d6675 对 #f6f7f9 = 5.4:1） */
+  --scrollbar-thumb: #5d6675;
+  --scrollbar-thumb-hover: #1b2029;
 
   color-scheme: light;
 }
@@ -122,6 +139,9 @@
 }
 [data-agent="reviewer"] {
   --agent-hue: var(--hue-reviewer);
+}
+[data-agent="user"] {
+  --agent-hue: var(--hue-user);
 }
 
 * {
@@ -157,18 +177,31 @@ pre,
   font-family: var(--font-mono);
 }
 
+/* 滚动条。**刻意只写 `::-webkit-scrollbar`，不写标准的 `scrollbar-width`/`scrollbar-color`**
+   —— Chromium 里只要出现那两个标准属性就会**整体接管**、把 `::-webkit-scrollbar` 全部
+   忽略掉，于是又退回一条细到看不见的系统条（等于白改）。Firefox 用系统默认滚动条，
+   那本来就是可见的。
+
+   `border: 2px solid transparent` + `background-clip: padding-box` 是「浮动滑块」的写法：
+   透明边框让出 2px 间隙、`padding-box` 把底色裁在边框内侧，于是**间隙里透出来的是所在
+   面板自己的背景**（时间线是 `--bg`、侧栏与检查器是 `--surface`），
+   不用给每个面板各写一份滚动条样式。 */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
-  border-radius: 6px;
-  border: 2px solid var(--bg);
+  background: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-mute);
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

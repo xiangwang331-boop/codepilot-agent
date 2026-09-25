@@ -386,7 +386,13 @@ def test_events_endpoint_backfills_and_filters_since(tmp_path):
         events = body["events"]
         assert events, "事件回填不该是空的"
         assert [e["seq"] for e in events] == list(range(len(events)))
-        assert events[0]["event"]["type"] == "AgentStarted"
+        # 第一条是用户下发的那句指令（`UserMessage`，图外事件），AgentStarted 紧随其后。
+        # 需求原文由事件流承载，所以刷新/重启后界面照样知道「用户问的是什么」。
+        assert events[0]["event"]["type"] == "UserMessage"
+        assert events[0]["event"]["agent"] == "User"
+        assert events[0]["event"]["message"] == "写一个快排"
+        assert events[0]["event"]["step"] is None
+        assert events[1]["event"]["type"] == "AgentStarted"
         assert events[-1]["event"]["type"] in ("AgentCompleted", "AgentFailed")
         assert all(e["event"]["thread_id"] == thread_id for e in events)
 

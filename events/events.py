@@ -66,6 +66,13 @@ class EventType(str, Enum):
     AGENT_FAILED = "AgentFailed"
     CONDENSE = "Condense"
     TOKEN_USAGE = "TokenUsage"
+    # 用户下发的指令本身。**只有服务端发**（`runtime/session.py` 的 worker 起步处），
+    # 图内不发 —— 所以 CLI（不走 `Session`）的事件流与输出逐字不变。
+    #
+    # 为什么它必须是一条事件而不是「前端自己记一下」：指令是这一轮所有 agent 事件的
+    # **前置语境**，只有进了事件流才拿得到正确的 seq（于是时间线上它就落在它引发的那轮
+    # 之前）、才落得进 PG（于是刷新/重启/换设备都还在）。前端本地记一份在 F5 之后就没了。
+    USER_MESSAGE = "UserMessage"
 
 
 @dataclass
@@ -232,4 +239,10 @@ def format_event(e: Event) -> str:
             f"{prefix} 消耗 {d.get('total_tokens', '?')} tokens"
             f"（输入 {d.get('prompt_tokens', '?')} → 输出 {d.get('completion_tokens', '?')}）"
         )
+    if e.type is EventType.USER_MESSAGE:
+        # 需求可以是多行的（Web 的输入框支持 Shift+Enter）——按 Condense 摘要的同一
+        # 手法逐行加前缀，别让第二行起裸奔、看起来像别的 agent 的输出。
+        head, *rest = e.message.splitlines() or [""]
+        out = f"=== 需求 ===\n{head}"
+        return out + "".join("\n" + line for line in rest)
     return f"{prefix} {e.message}"

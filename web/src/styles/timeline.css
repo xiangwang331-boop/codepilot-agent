@@ -257,6 +257,28 @@
   white-space: pre-wrap;
 }
 
+/* 用户指令：时间线上的「我说了什么」。
+ *
+ * 整段原文展开（`pre-wrap` 保住 Shift+Enter 的换行，否则多行需求会被压成一整段），
+ * **刻意不截断** —— 这是用户唯一能核对「我到底发了什么」的地方，而在它出现之前这条
+ * 信息在界面上根本不存在（发送后输入框就清空了）。
+ *
+ * `align-items: start` 而非继承基类的 `baseline`：正文动辄十几行，徽章压在最后一行
+ * 的基线上会跑到卡片底部去。 */
+.simple[data-kind="user"] {
+  align-items: start;
+  background: color-mix(in srgb, var(--agent-hue) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--agent-hue) 30%, transparent);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  margin: var(--sp-1) 0;
+}
+.simple[data-kind="user"] .simple__msg {
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* 根生命周期：做成一条极细的分隔线，不抢戏但让多轮会话有呼吸感 */
 .simple[data-kind="lifecycle"] {
   padding: var(--sp-2) 0 var(--sp-1);
@@ -350,11 +372,21 @@
 
 /* ---------------------------------------------------------------- 跳最新 */
 
+/* ⛔ 必须 `sticky`，不能 `absolute`（实测踩到）。
+ *
+ * `.jump` 的包含块就是 `.timeline` 本身 —— 而 `.timeline` 正是那个滚动容器。
+ * 于是绝对定位的角标落在**滚动内容**里，跟着内容一起被顶走：实测（最小复现页，
+ * 与 `.timeline` 同款 computed style）滚上去 300px 时按钮已经爬到视野顶部、
+ * 滚到 800px 时 `btnTop=-411` 完全出界。而「用户翻上去读历史」恰恰是它**唯一**
+ * 该出现的场合 —— 也就是说它以前只在「刚往上滚一点点」那条窄缝里看得见。
+ *
+ * `sticky` 把它钉在滚动视野的下沿（实测从 scrollTop=0 到最大值 `btnTop` 恒为
+ * 377 = 容器底 -12px），且它仍是 flex 子项，于是用 `align-self: center` 居中，
+ * 不再需要 `left:50% + translateX(-50%)` 那套。 */
 .jump {
-  position: absolute;
+  position: sticky;
   bottom: var(--sp-4);
-  left: 50%;
-  transform: translateX(-50%);
+  align-self: center;
   background: var(--accent);
   color: #fff;
   border: none;

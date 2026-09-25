@@ -21,7 +21,7 @@ import {
   type SessionStatus,
 } from "./types";
 
-/** `events/events.py` 的 EventType 九个值 —— 顺序与枚举一致（与 types.ts 同源）。 */
+/** `events/events.py` 的 EventType 十个值 —— 顺序与枚举一致（与 types.ts 同源）。 */
 const EVENT_TYPES: EventType[] = [
   "AgentStarted",
   "AgentStep",
@@ -32,6 +32,7 @@ const EVENT_TYPES: EventType[] = [
   "AgentFailed",
   "Condense",
   "TokenUsage",
+  "UserMessage",
 ];
 
 /** `AgentEvent` 的全部字段（多一个少一个都要红）。 */
@@ -56,7 +57,7 @@ describe("夹具本身是可用的真数据", () => {
     for (const [name, rows] of Object.entries(ALL)) {
       expect(rows.length, `${name} 是空的`).toBeGreaterThan(0);
     }
-    expect([APPROVED.length, REJECTED.length, BATCH.length]).toEqual([13, 7, 29]);
+    expect([APPROVED.length, REJECTED.length, BATCH.length]).toEqual([14, 8, 30]);
   });
 
   it("夹具是 **WS 帧**：每行都有 `kind: \"event\"`（`_normalize` 补的，不是手写的）", () => {
@@ -83,7 +84,7 @@ describe("AgentEvent 的字段名与取值域", () => {
     }
   });
 
-  it("`type` 全部落在九个值的联合里（后端加第十种事件时这里先红）", () => {
+  it("`type` 全部落在十个值的联合里（后端加第十一种事件时这里先红）", () => {
     const seen = new Set<string>();
     for (const rows of Object.values(ALL)) {
       for (const row of rows) {
@@ -91,13 +92,15 @@ describe("AgentEvent 的字段名与取值域", () => {
         seen.add(row.event.type);
       }
     }
-    // 夹具是刻意挑的场景，覆盖不到全部九种 —— 断言「见过的那几种」而不是全量
+    // 夹具是刻意挑的场景，覆盖不到全部十种 —— 断言「见过的那几种」而不是全量。
+    // `UserMessage` 是每份夹具的第一条（用户指令先于本轮一切 agent 事件）。
     expect([...seen].sort()).toEqual([
       "AgentCompleted",
       "AgentStarted",
       "AgentStep",
       "ToolCallCompleted",
       "ToolCallStarted",
+      "UserMessage",
     ]);
   });
 
@@ -149,19 +152,24 @@ describe("step / node 的 null 语义", () => {
     }
   });
 
-  it("只有会话层发的根 AgentStarted / AgentCompleted 是图外事件", () => {
+  it("图外事件只有三类：UserMessage、根 AgentStarted、根 AgentCompleted", () => {
     const external: [string, string][] = [];
     for (const rows of Object.values(ALL)) {
       for (const row of rows) {
         if (row.event.step === null) external.push([row.event.type, row.event.agent]);
       }
     }
-    // 每份夹具各一条 AgentStarted + 一条 AgentCompleted，agent 都是 Supervisor
+    // 每份夹具各一条 UserMessage（agent `User`，在 worker 起图之前发）
+    // + 一条 AgentStarted / 一条 AgentCompleted（agent 都是 Supervisor）。
+    // 三者的共同点就是**都不在图里跑**，所以都没有 step/node。
     expect(external).toEqual([
+      ["UserMessage", "User"],
       ["AgentStarted", "Supervisor"],
       ["AgentCompleted", "Supervisor"],
+      ["UserMessage", "User"],
       ["AgentStarted", "Supervisor"],
       ["AgentCompleted", "Supervisor"],
+      ["UserMessage", "User"],
       ["AgentStarted", "Supervisor"],
       ["AgentCompleted", "Supervisor"],
     ]);
@@ -234,13 +242,29 @@ describe("detail 的形状（前端据此重建产出文件）", () => {
         }
       }
     }
-    expect(APPROVED[0]!.event.agent).toBe("Supervisor");
+    // seq 0 是用户指令，agent 是 `User`（既不是 specialist 也不是 Supervisor）——
+    // 根 Supervisor 的 AgentStarted 因此排在它后面一位。
+    expect(APPROVED[0]!.event.agent).toBe("User");
+    expect(APPROVED[1]!.event.agent).toBe("Supervisor");
     expect(APPROVED.some((r) => r.event.agent === "coder")).toBe(true);
   });
 
   it("夹具里的任务文本与 `FIXTURE_TASK` 一致（面板/卡片断言都引用它）", () => {
-    const task = (APPROVED[2]!.event.detail!.args as Record<string, unknown>).task;
+    // seq 3 是 supervisor 真正调起 delegate 的那条（seq 0 用户指令 → 1 AgentStarted
+    // → 2 AgentStep → 3 ToolCallStarted）。
+    const task = (APPROVED[3]!.event.detail!.args as Record<string, unknown>).task;
     expect(task).toBe(FIXTURE_TASK);
+  });
+
+  it("seq 0 的 `message` 就是需求原文（前端渲染「你问了什么」的唯一数据源）", () => {
+    for (const [name, rows] of Object.entries(ALL)) {
+      expect(rows[0]!.event.type, name).toBe("UserMessage");
+      expect(rows[0]!.event.message, name).toBe(FIXTURE_TASK);
+      // 图外事件：没有 step/node，`detail` 也是 null
+      expect(rows[0]!.event.step, name).toBeNull();
+      expect(rows[0]!.event.node, name).toBeNull();
+      expect(rows[0]!.event.detail, name).toBeNull();
+    }
   });
 });
 

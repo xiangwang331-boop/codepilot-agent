@@ -44,13 +44,17 @@ ExitStack 的 LIFO 天然满足——所以进栈顺序就是上面那样，不�
 """
 from __future__ import annotations
 
+import os
 import time
 from contextlib import ExitStack, asynccontextmanager
+from os import PathLike
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import FileResponse, Response
+from starlette.types import Scope
 
 from api import routes, ws
 from config.logging_setup import get_logger, setup_logging, teardown_logging
@@ -70,6 +74,88 @@ logger = get_logger(__name__)
 # 静态测试页（P7-6）。挂载在最后：Starlette 按注册顺序匹配，先注册的 /sessions 优先，
 # 剩下的才轮到 "/"。目录不存在就不挂（免得开发中间态起不来服务）。
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+class _HashedAssetStaticFiles(StaticFiles):
+    """静态托管 + 缓存策略：入口 HTML 永远整份重取，带哈希的产物长缓存。
+
+    为什么非加不可（对着真机实测踩到）：`api/static/` 的入口 HTML 是一份**资源清单** ——
+    它引用的是带内容哈希的文件名，`npm run build` 每跑一次哈希就变一次。而 StaticFiles
+    默认**只发 `etag`/`last-modified`、不发 `Cache-Control`**，浏览器于是按启发式规则
+    （约「距 last-modified 时长的 10%」）自行决定复用、**根本不回源校验**。
+
+    后果是重建之后用户刷新页面，拿到的仍是缓存里的旧 `index.html`，而它指向的旧 JS/CSS
+    也在缓存里 → **整套界面退回改动前的样子**：实测症状正是「委派卡被压成 2px + 时间线
+    滚不动」，与服务端磁盘上已经是新的完全无关。这类「明明修好了却还是老样子」最难自查，
+    因为它看起来像修复没生效。
+
+    策略分两半，依据是「文件名会不会随内容变」：
+      · `*.html`（其实就是 index.html）→ `no-store`，**并且不发任何验证器**
+        （`etag` / `last-modified` 一起摘掉）→ 浏览器既不存它、也没有东西可以拿去做条件
+        请求，于是**每一次进入都必须整份重取**（本机 427 字节，代价可忽略）；
+      · 其余（Vite 产物，名字里带内容哈希）→ 长缓存 + `immutable`：内容变了名字必然变，
+        老名字永远不会被请求第二次，缓存越久越好。
+
+    ## 为什么从 `no-cache` 退到 `no-store`（2026-09-25 晚，实测后改的）
+
+    原先写的是 `no-cache`（**可以**存、但每次必须回源校验，etag 命中就是 304，代价极小）。
+    那条推理本身没错，错在它默认了一件事：**浏览器会把 304 响应里的 `cache-control`
+    合并回那份已存的副本**。而一份副本的新鲜度是**用它自己那份响应头**判定的 —— 那份头是
+    和副本一起存下来的，不是服务器现在会发的那组。于是「已经被存下来的旧副本」是一个
+    服务端再也够不着的状态，能不能自愈全押在上面那条合并行为上；一旦不成立（或那份副本的
+    启发式新鲜期还没走完），表现就是 **「每次进去都是旧的、点一下刷新才对」** —— 正是用户
+    反复报的现象，而且刷新一次并不保证就此终结。
+
+    `no-store` + 摘掉验证器把这条依赖整个删掉：**没有存得下的副本，也就没有「旧副本」这个
+    状态**。代价是每次进入多付一次 427 字节的整份重取（放弃了 304 这条更便宜的路），换来
+    这个状态不可能再出现。本机工具，这个交换很划算。
+
+    ## 为什么还要发 `Clear-Site-Data: "cache"`（2026-09-25 深夜·四，实测后加）
+
+    ⛔ **上面那句「旧副本这个状态不可能再出现」只对「将来存下的副本」成立 ——
+    它对**已经存在浏览器里**的那份副本毫无作用。** 用户随后那句
+    「一进去必须刷新一次、关掉浏览器再进去还是要刷新」（**每次**，永不自愈）就是这半句话的
+    反例，而它**不是缓存没配好**，是**缓存键**的问题：
+
+    - HTTP 缓存键是**完整 URL**，而 `App.tsx` 选中会话用的是 `history.replaceState`
+      —— **不产生导航**，只是把地址栏改成 `/?session=…`，文档还是从 `/` 加载的那一份；
+    - 于是用户真实走法是：**进 `/`**（命中改 `no-store` 之前存下的旧副本 → **零请求**、
+      旧界面）→ 点会话（无导航，仍是那个旧文档）→ **在 `/?session=…` 上刷新**
+      （**另一个缓存键**，那里没有副本 → 回源 → 拿到新的 → 「刷新就好了」）；
+    - **`/` 那份旧副本从头到尾没被碰过。** 关掉浏览器再进 `/` → 又是它。
+      循环**永不自愈**，与「重建了几次」无关。
+
+    所以在**交付出文档**（每次真回源的那一刻）顺带叫浏览器把本站缓存清掉：旧副本被删，
+    而 `no-store` 保证不再存新的 → **清一次、永久生效**。这是服务端唯一还能碰到客户端
+    那份副本的时机 —— 缓存命中时它连请求都不发，任何头都到不了它手上。
+
+    实测（玩具服务端 + 持久化 profile，跑用户的完整循环，各臂独立 profile）：
+    不发这个头的臂在「关浏览器 → 重开 → 进 `/`」拿到**旧界面且服务端 0 个请求**；
+    发这个头的臂拿到**新界面**，且 `/` 与产物都被重新取过。
+
+    代价（明确接受）：它也清掉本站的**产物缓存**，于是 `immutable` 那份长缓存每进一次页面
+    就作废一次、产物重新取一遍。本机回环、产物就那几个文件，换来的是「一进去就是对的」。
+    **只发给文档，绝不给产物** —— 给产物会让每次资源加载都清一次缓存，那是病态的。
+    """
+
+    def file_response(
+        self, full_path: PathLike, stat_result: os.stat_result, scope: Scope, status_code: int = 200
+    ) -> Response:
+        if Path(full_path).suffix == ".html":
+            # 自己建响应、**不走 super()**：304 的判定是在 super() 内部做完的
+            # （`starlette/staticfiles.py` 的 `file_response` 末尾调 `is_not_modified`，
+            # 拿响应上的 etag 与请求的 `If-None-Match` 比），事后再删头已经晚了 ——
+            # 必须从一开始就不给它验证器，304 这条路径根本不存在。
+            response = FileResponse(full_path, status_code=status_code, stat_result=stat_result)
+            response.headers["cache-control"] = "no-store"
+            del response.headers["etag"]
+            del response.headers["last-modified"]
+            # 清掉浏览器里可能已经存下的旧副本 —— 唯一能追溯作废它的手段。
+            response.headers["clear-site-data"] = '"cache"'
+            return response
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        response.headers["cache-control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def create_app(
@@ -143,7 +229,7 @@ def create_app(
     app.include_router(routes.router)
     app.include_router(ws.router)
     if STATIC_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+        app.mount("/", _HashedAssetStaticFiles(directory=STATIC_DIR, html=True), name="ui")
     return app
 
 

@@ -127,17 +127,17 @@ describe("对真实夹具判重", () => {
     const e = reruns[0]!.event;
     expect(e.type).toBe("ToolCallStarted");
     expect(e.message).toBe("delegate");
-    // 它是 seq 2 的逐字重发 → 是第二条，不是第一条
-    expect(reruns[0]!.seq).toBe(3);
+    // 它是 seq 3 的逐字重发 → 是第二条，不是第一条（seq 0 是用户指令，不参与判重）
+    expect(reruns[0]!.seq).toBe(4);
   });
 
   it("一批两个委派的夹具：重跑是**一整段连续的 seq**，不是零星几条", () => {
     const items = markReruns(BATCH);
     // 第二轮重跑把第一个委派连同它的 7 条子事件、以及第二个委派的开块事件
-    // **整段原样再发一遍**：seq 11..19 连续 9 条全是重跑。这条断言把「重跑 = 一整段」
+    // **整段原样再发一遍**：seq 12..20 连续 9 条全是重跑。这条断言把「重跑 = 一整段」
     // 这个形状钉死——如果哪天后端改成只补发没有的那条，这里会立刻红。
     expect(items.filter((i) => i.isRerun).map((i) => i.seq)).toEqual([
-      11, 12, 13, 14, 15, 16, 17, 18, 19,
+      12, 13, 14, 15, 16, 17, 18, 19, 20,
     ]);
   });
 
@@ -145,7 +145,7 @@ describe("对真实夹具判重", () => {
     const opens = markReruns(BATCH).filter(
       (i) => i.event.type === "ToolCallStarted" && i.event.message === "delegate",
     );
-    expect(opens.map((i) => i.seq)).toEqual([2, 10, 11, 19]);
+    expect(opens.map((i) => i.seq)).toEqual([3, 11, 12, 20]);
     expect(opens.map((i) => i.isRerun)).toEqual([false, false, true, true]);
     const key = (i: (typeof opens)[number]): string | null => replayKey(i.event);
     // 重发的与**自己**的首发同键……
@@ -164,9 +164,9 @@ describe("对真实夹具判重", () => {
       (i) => i.event.type === "AgentStarted" && i.event.agent !== "Supervisor",
     );
     expect(childStarts.map((i) => [i.seq, i.isRerun])).toEqual([
-      [3, false],
-      [12, true],
-      [20, false],
+      [4, false],
+      [13, true],
+      [21, false],
     ]);
   });
 });

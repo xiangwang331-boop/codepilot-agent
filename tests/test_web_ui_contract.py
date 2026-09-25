@@ -807,14 +807,53 @@ needs_build = pytest.mark.skipif(
 
 @needs_build
 def test_serves_built_ui(tmp_path):
-    """构建产物经 `StaticFiles(html=True)` 托管 —— 后端为此一行没改（`api/app.py:113-114`）。"""
+    """构建产物取得到，且**缓存策略按「文件名会不会随内容变」分两半**。
+
+    缓存断言是 2026-09-25 补的，起因是用户实测反馈「前端改了、界面还是老样子」：
+    入口 HTML 就是一份资源清单（引用带内容哈希的文件名），重建后哈希会变，而 Starlette
+    默认只发 `etag`/`last-modified` → 浏览器启发式复用、不回源校验 → 拿旧清单配旧文件，
+    整套界面退回改动前（实测症状：委派卡压成 2px + 时间线滚不动）。策略见
+    `api/app.py` 的 `_HashedAssetStaticFiles`。
+
+    当晚又从 `no-cache` 改成 `no-store` + **摘掉验证器**（用户反馈「每次一进去都要刷新」）：
+    `no-cache` 只在「浏览器会把 304 里的 `cache-control` 合并回已存副本」这条**无法验证的
+    依赖**成立时才管用，而旧副本的响应头是和副本一起存下来的、服务端再也够不着。所以这里
+    断言的是**强性质**：入口 HTML 既不许被存，也**不许出现 304**（`If-None-Match: *` 是
+    条件请求里最强的形式，会走 304 的就必须答 304）—— 没有可存的副本，就没有「旧副本」这个状态。
+    """
     with _client(tmp_path) as client:
         root = client.get("/")
         assert root.status_code == 200, root.text
         assert '<div id="root">' in root.text, "返回的不是 Vite 构建出的 index.html"
+        # 入口 HTML 既不许被缓存，也不许有条件请求这条路可走
+        assert root.headers["cache-control"] == "no-store", "入口 HTML 必须禁止存储"
+        assert "etag" not in root.headers, "入口 HTML 不能发 etag（否则又能走 304）"
+        assert "last-modified" not in root.headers, "入口 HTML 不能发 last-modified"
+        # 条件请求必须**答 200 整份**，而不是 304 —— 这是「摘掉验证器」的核心性质
+        conditional = client.get("/", headers={"If-None-Match": "*"})
+        assert conditional.status_code == 200, (
+            f"入口 HTML 对条件请求答了 {conditional.status_code}，"
+            "说明又走上了 304 那条路（旧副本会因此永远活着）"
+        )
+        assert conditional.headers["cache-control"] == "no-store"
 
-        # 页面引用的 hashed asset 必须真的能取到
-        refs = re.findall(r'src="(/assets/[^"]+)"', root.text)
-        assert refs, "index.html 里没有 /assets/*.js 引用"
+        # ⛔ 上面那三条只管得住**将来**存的副本；**已经存在浏览器里**的那份，
+        # `no-store` 追不到它（缓存键是完整 URL，而选中会话是 `history.replaceState`、
+        # 不产生导航 → 那份旧副本挂在 `/` 上，刷新却发生在 `/?session=…`）。
+        # 唯一还能碰到它的手段是在交付文档时叫浏览器清缓存 → 清一次永久生效。
+        assert root.headers["clear-site-data"] == '"cache"', (
+            "入口 HTML 必须带 Clear-Site-Data: \"cache\" —— 否则浏览器里已存的旧副本"
+            "永远清不掉（用户那句「每次一进去都要刷新」就是这么来的）"
+        )
+
+        # 页面引用的 hashed asset 必须真的能取到，且可以长缓存（名字随内容变，老名字不会再来）
+        refs = re.findall(r'(?:src|href)="(/assets/[^"]+)"', root.text)
+        assert refs, "index.html 里没有 /assets/* 引用"
         for ref in refs:
-            assert client.get(ref).status_code == 200, f"{ref} 取不到"
+            got = client.get(ref)
+            assert got.status_code == 200, f"{ref} 取不到"
+            assert "immutable" in got.headers["cache-control"], f"{ref} 没拿到长缓存"
+            # **产物绝不能带 Clear-Site-Data**：那会让每次资源加载都清一次缓存，病态。
+            assert "clear-site-data" not in got.headers, (
+                f"{ref} 带了 clear-site-data —— 只能发给文档，不能发给产物"
+            )
